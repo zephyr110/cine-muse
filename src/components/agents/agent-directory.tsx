@@ -60,7 +60,7 @@ export function AgentDirectory() {
               <h2 className="text-sm font-semibold">{AGENT_GROUP_LABEL[g]}</h2>
               <span className="text-xs text-muted-foreground">{GROUP_DESC[g]}</span>
             </div>
-            <div className="grid gap-4 @3xl:grid-cols-2 @7xl:grid-cols-3">
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
               {items.map((a) => {
                 const st = STATUS_META[a.status]
                 const gate = isGateAgent(a.name)

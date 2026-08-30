@@ -62,7 +62,7 @@ export function KnowledgeBoard() {
           </p>
         </div>
       ) : (
-      <div className="grid gap-4 @3xl:grid-cols-2 @7xl:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
         {state.knowledgeBases.map((kb) => (
           <Card key={kb.id} className={`flex flex-col ${kb.enabled ? "" : "opacity-70"}`}>
             <CardHeader className="flex-row items-start space-y-0">
