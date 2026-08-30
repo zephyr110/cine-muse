@@ -11,10 +11,8 @@ import * as React from "react"
 import {
   BoxIcon,
   FileAudioIcon,
-  FileVideoIcon,
-  ImageIcon,
   LandmarkIcon,
-  LibraryBigIcon,
+  FolderOpenIcon,
   LoaderCircleIcon,
   PaletteIcon,
   PencilIcon,
@@ -183,8 +181,8 @@ function AssetFormDialog({
             资产是全局素材，项目通过绑定引用。绑定后 agents 会在对应环节消费它作为生成约束。
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="grid grid-cols-[1fr_140px] gap-3">
+        <div className="space-y-5">
+          <div className="grid grid-cols-[1fr_160px] gap-4">
             <div className="space-y-2">
               <Label htmlFor="ast-name">名称</Label>
               <Input
@@ -200,10 +198,10 @@ function AssetFormDialog({
                 value={form.category}
                 onValueChange={(v) => setForm({ ...form, category: (v ?? "character") as AssetCategory })}
               >
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {CATEGORIES.map((c) => (
-                    <SelectItem key={c} value={c}>{ASSET_CATEGORY_LABEL[c]}</SelectItem>
+                    <SelectItem key={c} value={c} label={ASSET_CATEGORY_LABEL[c]}>{ASSET_CATEGORY_LABEL[c]}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -338,7 +336,7 @@ function AssetCard({
 }) {
   const deleteDisabled = usedBy > 0
   return (
-    <Card className="flex flex-col overflow-hidden transition-shadow hover:shadow-md">
+    <Card className="flex flex-col overflow-hidden pt-0! transition-shadow hover:shadow-md">
       {/* 封面：有素材文件时渲染媒体预览，否则渐变色占位 */}
       {asset.file ? (
         <div className={`relative h-28 overflow-hidden bg-gradient-to-br ${asset.color}`}>
@@ -359,7 +357,6 @@ function AssetCard({
             {ASSET_CATEGORY_LABEL[asset.category]}
           </Badge>
           <Badge className="absolute bottom-2.5 right-2.5 gap-1 bg-black/50 text-[11px] text-white">
-            {asset.file.kind === "image" ? <ImageIcon className="size-3" /> : asset.file.kind === "video" ? <FileVideoIcon className="size-3" /> : <FileAudioIcon className="size-3" />}
             {FILE_KIND_LABEL[asset.file.kind]}
           </Badge>
         </div>
@@ -522,7 +519,7 @@ export function AssetLibrary() {
         </div>
       ) : (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-14 text-center">
-          <LibraryBigIcon className="size-8 text-muted-foreground/40" />
+          <FolderOpenIcon className="size-8 text-muted-foreground/40" />
           <p className="text-sm font-medium text-muted-foreground">资产库还是空的</p>
           <p className="max-w-sm text-xs leading-relaxed text-muted-foreground/70">
             创建角色/场景/道具/风格卡后，新建项目向导会按题材与风格自动推荐绑定。

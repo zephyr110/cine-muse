@@ -1,6 +1,6 @@
 "use client"
 
-import { ClapperboardIcon, GaugeIcon, HourglassIcon, UsersIcon } from "lucide-react"
+import { ClapperboardIcon, GaugeIcon, HourglassIcon, LoaderCircleIcon } from "lucide-react"
 
 import { useApp, usePendingApprovals } from "@/lib/store"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -20,10 +20,10 @@ export function StatCards() {
     : 0
 
   const cards = [
-    { title: "进行中项目", value: active, icon: <HourglassIcon className="size-4.5" />, chip: "bg-blue-500/10 text-blue-500" },
+    { title: "进行中项目", value: active, icon: <LoaderCircleIcon className="size-4.5" />, chip: "bg-blue-500/10 text-blue-500" },
     { title: "已完成成片", value: finished, icon: <ClapperboardIcon className="size-4.5" />, chip: "bg-emerald-500/10 text-emerald-500" },
     { title: "平均质量分", value: avgScore, suffix: "/100", icon: <GaugeIcon className="size-4.5" />, chip: "bg-violet-500/10 text-violet-500" },
-    { title: "待确认", value: pending, icon: <UsersIcon className="size-4.5" />, chip: "bg-amber-500/10 text-amber-500", alert: pending > 0 },
+    { title: "待确认", value: pending, icon: <HourglassIcon className="size-4.5" />, chip: "bg-amber-500/10 text-amber-500", alert: pending > 0 },
   ]
 
   return (

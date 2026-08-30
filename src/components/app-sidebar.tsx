@@ -8,7 +8,7 @@ import {
   CirclePlusIcon,
   ClapperboardIcon,
   LayoutDashboardIcon,
-  LibraryBigIcon,
+  FolderOpenIcon,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
@@ -54,7 +54,7 @@ import { SettingsDialog } from "@/components/settings/settings-dialog"
 const NAV = [
   { group: "工作区", items: [
     { title: "工作台", url: "/dashboard", icon: <LayoutDashboardIcon /> },
-    { title: "资产库", url: "/assets", icon: <LibraryBigIcon />, desc: "角色/场景/道具/风格素材" },
+    { title: "资产库", url: "/assets", icon: <FolderOpenIcon />, desc: "角色/场景/道具/风格素材" },
     { title: "知识库", url: "/knowledge", icon: <NotebookIcon />, desc: "RAG 知识库管理" },
     { title: "智能体", url: "/agents", icon: <BotIcon />, desc: "专业 Sub-Agent 目录" },
   ]},

@@ -3,8 +3,7 @@
 import * as React from "react"
 import {
   BotIcon,
-  GaugeIcon,
-  KeyRoundIcon,
+  CpuIcon,
   LibraryBigIcon,
 } from "lucide-react"
 
@@ -87,14 +86,14 @@ export function AgentDirectory() {
                       <p className="text-xs leading-relaxed text-muted-foreground">{a.description}</p>
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                          <span className="flex items-center gap-1"><GaugeIcon className="size-3" /> 历史均分</span>
+                          <span>历史均分</span>
                           <span className="font-medium tabular-nums">{a.avgScore ?? "—"}/100</span>
                         </div>
                         <Progress value={a.avgScore ?? 0} className={a.avgScore == null ? "h-1 opacity-30" : "h-1"} />
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
                         <Badge variant="outline" className="gap-1 text-[11px] font-normal">
-                          <KeyRoundIcon className="size-3" /> {model?.options.find((o) => o.id === model.selected)?.label ?? "未分配"}
+                          <CpuIcon className="size-3" /> {model?.options.find((o) => o.id === model.selected)?.label ?? "未分配"}
                         </Badge>
                         {kbs.map((kb) => (
                           <Tooltip key={kb.id}>
@@ -106,7 +105,7 @@ export function AgentDirectory() {
                         ))}
                       </div>
                       {/* 能力约束：门禁规则（qa 角色）与迭代上限来自引擎接线/元数据 */}
-                      <div className="flex flex-wrap items-center gap-1.5 border-t pt-2 text-[11px]">
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-md bg-muted/40 px-2.5 py-2 text-[11px]">
                         {gate && (
                           <Badge className={`border ${st.className}`}>
                             门禁 · ≥{GATE_PASS_SCORE} 分通过 / 最多打回 {GATE_MAX_RETRIES} 次

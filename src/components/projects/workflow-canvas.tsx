@@ -10,7 +10,7 @@ import {
   RefreshCwIcon,
   SkipForwardIcon,
   TriangleAlertIcon,
-  UserCheckIcon,
+  HourglassIcon,
   XIcon,
 } from "lucide-react"
 
@@ -50,7 +50,7 @@ export const STAGE_STATUS_META: Record<
   waiting_approval: {
     label: "待确认",
     ring: "border-amber-500/60 bg-amber-500/5",
-    icon: <UserCheckIcon className="size-4 text-amber-500" />,
+    icon: <HourglassIcon className="size-4 text-amber-500" />,
   },
   approved: {
     label: "已确认",

@@ -283,7 +283,7 @@ export function NewProjectWizard() {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {DURATIONS.map((d) => (
-                      <SelectItem key={d} value={String(d)}>{d / 60} 分钟</SelectItem>
+                      <SelectItem key={d} value={String(d)} label={`${d / 60} 分钟`}>{d / 60} 分钟</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -313,9 +313,9 @@ export function NewProjectWizard() {
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="draft">草稿 (720p)</SelectItem>
-                    <SelectItem value="standard">标准 (1080p)</SelectItem>
-                    <SelectItem value="hd">高清 (4K)</SelectItem>
+                    <SelectItem value="draft" label="草稿 (720p)">草稿 (720p)</SelectItem>
+                    <SelectItem value="standard" label="标准 (1080p)">标准 (1080p)</SelectItem>
+                    <SelectItem value="hd" label="高清 (4K)">高清 (4K)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

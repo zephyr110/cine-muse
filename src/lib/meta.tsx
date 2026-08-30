@@ -7,6 +7,7 @@
  */
 
 import {
+  ArrowRightLeftIcon,
   CircleCheckIcon,
   CircleXIcon,
   ClapperboardIcon,
@@ -24,7 +25,7 @@ import {
   ThumbsUpIcon,
   TriangleAlertIcon,
   UnlinkIcon,
-  UserCheckIcon,
+  HourglassIcon,
   Wand2Icon,
   ZapIcon,
 } from "lucide-react"
@@ -52,14 +53,14 @@ export const EVENT_META: Record<EventKind, { icon: React.ReactNode; color: strin
   stage_completed: { icon: <ListChecksIcon className="size-3" />, color: "bg-blue-500" },
   gate_passed: { icon: <CircleCheckIcon className="size-3" />, color: "bg-emerald-500" },
   gate_rejected: { icon: <CircleXIcon className="size-3" />, color: "bg-red-500" },
-  waiting_approval: { icon: <UserCheckIcon className="size-3" />, color: "bg-amber-500" },
+  waiting_approval: { icon: <HourglassIcon className="size-3" />, color: "bg-amber-500" },
   approved: { icon: <ThumbsUpIcon className="size-3" />, color: "bg-emerald-500" },
   rejected: { icon: <ThumbsDownIcon className="size-3" />, color: "bg-amber-500" },
   skipped: { icon: <SkipForwardIcon className="size-3" />, color: "bg-slate-400" },
   retry: { icon: <RotateCcwIcon className="size-3" />, color: "bg-orange-500" },
   project_completed: { icon: <PartyPopperIcon className="size-3" />, color: "bg-emerald-500" },
   project_failed: { icon: <TriangleAlertIcon className="size-3" />, color: "bg-red-500" },
-  mode_changed: { icon: <RotateCcwIcon className="size-3" />, color: "bg-violet-500" },
+  mode_changed: { icon: <ArrowRightLeftIcon className="size-3" />, color: "bg-violet-500" },
   asset_bound: { icon: <PaperclipIcon className="size-3" />, color: "bg-blue-500" },
   asset_unbound: { icon: <UnlinkIcon className="size-3" />, color: "bg-slate-400" },
   artifact_edited: { icon: <PencilIcon className="size-3" />, color: "bg-violet-500" },

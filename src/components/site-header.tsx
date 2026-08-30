@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { UsersIcon } from "lucide-react"
+import { HourglassIcon } from "lucide-react"
 
 import { usePendingApprovals } from "@/lib/store"
 import { Separator } from "@/components/ui/separator"
@@ -71,7 +71,7 @@ export function SiteHeader() {
               <TooltipTrigger
                 render={<Button variant="outline" size="sm" nativeButton={false} className="gap-1.5 border-amber-500/50 text-warn" render={<Link href="/dashboard" />} />}
               >
-                <UsersIcon className="size-3.5" />
+                <HourglassIcon className="size-3.5" />
                 <span className="font-medium">{pending} 项待确认</span>
               </TooltipTrigger>
               <TooltipContent>有待确认节点等待你处理</TooltipContent>

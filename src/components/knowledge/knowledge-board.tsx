@@ -48,8 +48,8 @@ export function KnowledgeBoard() {
           </p>
         </div>
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <Badge variant="outline" className="gap-1"><DatabaseIcon className="size-3" /> {enabled}/{state.knowledgeBases.length} 已启用</Badge>
-          <Badge variant="outline" className="gap-1"><LibraryBigIcon className="size-3" /> 共 {state.knowledgeBases.reduce((a, b) => a + b.entries, 0).toLocaleString()} 条目</Badge>
+          <Badge variant="outline">{enabled}/{state.knowledgeBases.length} 已启用</Badge>
+          <Badge variant="outline">共 {state.knowledgeBases.reduce((a, b) => a + b.entries, 0).toLocaleString()} 条目</Badge>
         </div>
       </div>
 
@@ -85,7 +85,7 @@ export function KnowledgeBoard() {
                 ))}
               </div>
             </CardContent>
-            <div className="mt-auto flex items-center justify-between border-t px-4 py-2.5">
+            <div className="mt-auto flex items-center justify-between bg-muted/50 px-4 py-2.5">
               <span className="text-[11px] text-muted-foreground">
                 {kb.enabled ? "参与智能体检索" : "已停用 · 不参与检索"}
               </span>

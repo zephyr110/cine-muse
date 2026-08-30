@@ -23,7 +23,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
 
 const KIND_META = {
   llm: { icon: <CpuIcon className="size-4.5" />, desc: "剧本撰写、审查与编排决策的推理内核" },
@@ -76,7 +75,7 @@ export function ModelSettings() {
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {m.options.map((o) => (
-                        <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>
+                        <SelectItem key={o.id} value={o.id} label={o.label}>{o.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -103,8 +102,7 @@ export function ModelSettings() {
         )
       })}
 
-      <Separator />
-      <p className="text-xs text-muted-foreground">配置变更自动保存至本地，立即对后续编排生效</p>
+            <p className="text-xs text-muted-foreground">配置变更自动保存至本地，立即对后续编排生效</p>
     </div>
   )
 }

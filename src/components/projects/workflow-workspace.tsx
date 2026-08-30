@@ -5,11 +5,9 @@ import Link from "next/link"
 import {
   ArrowLeftIcon,
   CheckIcon,
-  Clock3Icon,
-  GaugeIcon,
   MonitorPlayIcon,
   PlayIcon,
-  UserCheckIcon,
+  HourglassIcon,
 } from "lucide-react"
 
 import { MODE_META, STATUS_META } from "@/lib/meta"
@@ -27,7 +25,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Progress } from "@/components/ui/progress"
-import { Separator } from "@/components/ui/separator"
 import { WorkflowCanvas } from "@/components/projects/workflow-canvas"
 import { FinalPreview } from "@/components/projects/final-preview"
 
@@ -65,7 +62,7 @@ export function WorkflowWorkspace({ projectId }: { projectId: string }) {
           <Badge variant="outline" className={meta.className}>{meta.label}</Badge>
           {waiting > 0 && (
             <Badge variant="outline" className="gap-1 status-warn">
-              <UserCheckIcon className="size-3" /> {waiting} 个节点待确认
+              <HourglassIcon className="size-3" /> {waiting} 个节点待确认
             </Badge>
           )}
           <DropdownMenu>
@@ -101,8 +98,8 @@ export function WorkflowWorkspace({ projectId }: { projectId: string }) {
             </DropdownMenuContent>
           </DropdownMenu>
           <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1"><Clock3Icon className="size-3.5" /> {formatMinutes(project.durationSec)} · {project.aspectRatio}</span>
-            <span className="flex items-center gap-1"><GaugeIcon className="size-3.5" /> 均分 {project.avgScore ?? "—"}</span>
+            <span>{formatMinutes(project.durationSec)} · {project.aspectRatio}</span>
+            <span>均分 {project.avgScore ?? "—"}</span>
           </div>
         </div>
         <p className="max-w-2xl text-sm text-muted-foreground">{project.premise}</p>
@@ -138,10 +135,7 @@ export function WorkflowWorkspace({ projectId }: { projectId: string }) {
         </div>
       </div>
 
-      <Separator />
-
-      {/* 工作流画布 */}
-      <WorkflowCanvas projectId={project.id} />
+            <WorkflowCanvas projectId={project.id} />
 
       {/* 成片预览 */}
       {project.status === "completed" && <FinalPreview projectId={project.id} />}

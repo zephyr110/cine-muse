@@ -2,12 +2,10 @@
 
 import * as React from "react"
 import {
-  ClapperboardIcon,
   DownloadIcon,
   MonitorPlayIcon,
   PlayIcon,
   Share2Icon,
-  SparklesIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -32,19 +30,13 @@ export function FinalPreview({ projectId }: { projectId: string }) {
   return (
     <section className="space-y-3">
       <div>
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
-          <SparklesIcon className="size-4 text-emerald-500" />
-          成片预览
-        </h2>
+        <h2 className="text-sm font-semibold">成片预览</h2>
         <p className="text-xs text-muted-foreground">全流程已完成，产出可直接交付</p>
       </div>
 
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
-          <CardTitle className="flex items-center gap-2 text-sm">
-            <ClapperboardIcon className="size-4 text-muted-foreground" />
-            {cut?.title ?? `${project.title} · 成片`}
-          </CardTitle>
+          <CardTitle className="text-sm">{cut?.title ?? `${project.title} · 成片`}</CardTitle>
           <Badge variant="outline" className="text-[11px]">MP4 · 已渲染</Badge>
         </CardHeader>
         <CardContent className="space-y-4">

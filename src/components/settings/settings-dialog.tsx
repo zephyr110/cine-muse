@@ -53,7 +53,7 @@ export function SettingsDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       {/* p-0!/gap-0!：base dialog 的 p-4/gap-4 同特异性后发覆盖，必须 important */}
       <DialogContent className="w-full gap-0! overflow-hidden p-0! sm:max-w-4xl!">
-        <DialogHeader className="border-b px-6 py-4">
+        <DialogHeader className="px-6 py-4">
           <DialogTitle>系统设置</DialogTitle>
           <DialogDescription>账号与模型服务配置，变更即时生效</DialogDescription>
         </DialogHeader>
@@ -61,7 +61,7 @@ export function SettingsDialog({
         <div className="grid h-[min(calc(80svh-4.5rem),640px)] grid-cols-1 sm:grid-cols-[12rem_1fr]">
           <nav
             aria-label="设置分类"
-            className="flex flex-row gap-1 border-b bg-muted/40 p-3 sm:flex-col sm:border-r sm:border-b-0"
+            className="flex flex-row gap-1 bg-muted/40 p-3 sm:flex-col"
           >
             {TABS.map((t) => (
               <button

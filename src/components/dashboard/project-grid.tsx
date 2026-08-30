@@ -10,7 +10,7 @@ import {
   GaugeIcon,
   InboxIcon,
   LoaderCircleIcon,
-  UserCheckIcon,
+  HourglassIcon,
 } from "lucide-react"
 
 import { useProjects } from "@/lib/store"
@@ -28,7 +28,7 @@ export function ProjectCard({ project }: { project: Project }) {
   const nextStage = project.stages.find((s) => s.status === "running" || s.status === "iterating")
 
   return (
-    <Card className="group overflow-hidden transition-shadow hover:shadow-md">
+    <Card className="group overflow-hidden pt-0! transition-shadow hover:shadow-md">
       <Link href={`/projects?id=${project.id}`} className="block">
         {/* 封面 */}
         <div className={`relative flex h-28 items-center justify-center bg-gradient-to-br ${project.cover}`}>
@@ -36,11 +36,11 @@ export function ProjectCard({ project }: { project: Project }) {
           <Badge className={`absolute left-2.5 top-2.5 border ${meta.className}`}>{meta.label}</Badge>
           {waitingStages.length > 0 && (
             <Badge className="absolute right-2.5 top-2.5 gap-1 status-warn">
-              <UserCheckIcon className="size-3" /> 待确认 {waitingStages.length}
+              <HourglassIcon className="size-3" /> 待确认 {waitingStages.length}
             </Badge>
           )}
         </div>
-        <CardHeader className="pb-2">
+        <CardHeader className="pt-4 pb-2">
           <CardTitle className="text-base leading-tight">{project.title}</CardTitle>
           <p className="line-clamp-1 text-xs text-muted-foreground">
             {project.genre} · {project.style} · {formatMinutes(project.durationSec)} · {project.aspectRatio}
@@ -122,7 +122,7 @@ export function ProjectGrid() {
               }`}
             >
               <div className="min-h-0 overflow-hidden">
-                <div className="border-t p-4">
+                <div className="bg-muted/40 p-4">
                   {items.length > 0 ? (
                     <div className="grid gap-4 @3xl:grid-cols-2 @7xl:grid-cols-3">
                       {items.map((p) => (

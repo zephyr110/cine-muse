@@ -2,7 +2,6 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { ActivityIcon } from "lucide-react"
 
 import { useApp } from "@/lib/store"
 import { timeAgo } from "@/lib/format"
@@ -16,10 +15,7 @@ export function ActivityFeed() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <ActivityIcon className="size-4 text-muted-foreground" />
-          最近活动
-        </CardTitle>
+        <CardTitle className="text-sm">最近活动</CardTitle>
       </CardHeader>
       <CardContent>
         {events.length === 0 ? (
