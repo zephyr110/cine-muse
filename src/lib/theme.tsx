@@ -10,7 +10,7 @@
 
 import * as React from "react"
 
-type Theme = "light" | "dark" | "system"
+export type Theme = "light" | "dark" | "system"
 
 const THEME_KEY = "theme"
 const THEME_VALUES: Theme[] = ["light", "dark", "system"]

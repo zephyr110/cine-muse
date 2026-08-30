@@ -17,7 +17,7 @@ import {
 
 import { useApp } from "@/lib/store"
 import { logout } from "@/lib/auth"
-import { useTheme } from "@/lib/theme"
+import { useTheme, type Theme } from "@/lib/theme"
 import {
   Sidebar,
   SidebarContent,
@@ -42,6 +42,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { SettingsDialog } from "@/components/settings/settings-dialog"
 
 const NAV = [
@@ -53,17 +54,18 @@ const NAV = [
   ]},
 ]
 
-const THEME_OPTIONS = [
+const THEME_OPTIONS: { value: Theme; label: string }[] = [
   { value: "light", label: "浅色" },
   { value: "system", label: "系统" },
   { value: "dark", label: "深色" },
-] as const
+]
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
   const { state, dispatch } = useApp()
   const { theme, setTheme } = useTheme()
-  const themeIndex = Math.max(0, THEME_OPTIONS.findIndex((t) => t.value === theme))
+  // Theme 是封闭联合类型且 THEME_OPTIONS 全覆盖，findIndex 不可能为 -1（滑块定位）
+  const themeIndex = THEME_OPTIONS.findIndex((t) => t.value === theme)
   const router = useRouter()
   const user = state.user
   const [settingsOpen, setSettingsOpen] = React.useState(false)
@@ -157,25 +159,28 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <SunIcon className="size-4 text-muted-foreground" />
                 主题切换
               </span>
-              <div className="relative grid h-8 w-40 shrink-0 grid-cols-3 rounded-lg bg-muted p-1">
+              <ToggleGroup
+                value={[theme]}
+                onValueChange={(v) => { if (v && v.length > 0) setTheme(v[v.length - 1] as Theme) }}
+                spacing={0}
+                className="relative h-8 w-40 shrink-0 rounded-lg bg-muted p-1"
+              >
+                {/* 滑块：宽度 = (轨道内容宽) / 段数，随激活段平移 */}
                 <span
                   aria-hidden
                   className="absolute inset-y-1 left-1 w-[calc((100%-0.5rem)/3)] rounded-md bg-background shadow-sm transition-transform duration-200 ease-out"
                   style={{ transform: `translateX(${themeIndex * 100}%)` }}
                 />
                 {THEME_OPTIONS.map((t) => (
-                  <button
+                  <ToggleGroupItem
                     key={t.value}
-                    type="button"
-                    onClick={() => setTheme(t.value)}
-                    className={`relative z-10 rounded-md text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
-                      theme === t.value ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-                    }`}
+                    value={t.value}
+                    className="relative z-10 h-6 flex-1 rounded-none px-0 text-xs font-medium hover:bg-transparent hover:text-foreground aria-pressed:bg-transparent aria-pressed:text-foreground text-muted-foreground"
                   >
                     {t.label}
-                  </button>
+                  </ToggleGroupItem>
                 ))}
-              </div>
+              </ToggleGroup>
             </div>
             <DropdownMenuItem className="py-2" onClick={() => setSettingsOpen(true)}>
               <Settings2Icon /> 系统设置

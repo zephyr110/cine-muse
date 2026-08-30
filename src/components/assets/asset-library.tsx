@@ -99,6 +99,8 @@ const SORT_OPTIONS = [
   { value: "used", label: "使用最多" },
 ] as const
 
+type SortKey = (typeof SORT_OPTIONS)[number]["value"]
+
 const COLOR_OPTIONS = [
   "from-indigo-500/40 to-violet-500/25",
   "from-rose-500/40 to-pink-500/25",
@@ -432,7 +434,7 @@ export function AssetLibrary() {
   const [category, setCategory] = React.useState<AssetCategory | "all">("all")
   const [query, setQuery] = React.useState("")
   const [tags, setTags] = React.useState<string[]>([])
-  const [sort, setSort] = React.useState<"updated" | "used">("updated")
+  const [sort, setSort] = React.useState<SortKey>("updated")
   const [formOpen, setFormOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<Asset | null>(null)
   const [deleting, setDeleting] = React.useState<Asset | null>(null)
@@ -459,30 +461,43 @@ export function AssetLibrary() {
       .map(([t]) => t)
   }, [state.assets])
 
-  const filtered = state.assets
-    .filter((a) => {
-      if (category !== "all" && a.category !== category) return false
-      if (tags.length > 0 && !tags.every((t) => a.tags.includes(t))) return false
-      const q = query.trim().toLowerCase()
-      if (!q) return true
-      return (
-        a.name.toLowerCase().includes(q) ||
-        a.description.toLowerCase().includes(q) ||
-        a.tags.some((t) => t.toLowerCase().includes(q))
-      )
-    })
-    .sort((x, y) => {
-      if (sort === "used") {
-        const d = (usedByCount.get(y.id) ?? 0) - (usedByCount.get(x.id) ?? 0)
-        if (d !== 0) return d
-      }
-      return y.updatedAt.localeCompare(x.updatedAt)
-    })
+  // 已选标签中仍存在于库中的子集：资产被编辑/删除移除标签后自动剪枝，避免永久零结果筛选
+  const selectedTags = React.useMemo(
+    () => tags.filter((t) => allTags.includes(t)),
+    [tags, allTags],
+  )
+
+  // 单一「筛选生效」判定：工具栏重置按钮与空态分支共用，避免两处判定漂移
+  const hasFilters =
+    category !== "all" || query.trim() !== "" || selectedTags.length > 0 || sort !== "updated"
+
+  const filtered = React.useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return state.assets
+      .filter((a) => {
+        if (category !== "all" && a.category !== category) return false
+        if (selectedTags.length > 0 && !selectedTags.every((t) => a.tags.includes(t))) return false
+        if (!q) return true
+        return (
+          a.name.toLowerCase().includes(q) ||
+          a.description.toLowerCase().includes(q) ||
+          a.tags.some((t) => t.toLowerCase().includes(q))
+        )
+      })
+      .sort((x, y) => {
+        if (sort === "used") {
+          const d = (usedByCount.get(y.id) ?? 0) - (usedByCount.get(x.id) ?? 0)
+          if (d !== 0) return d
+        }
+        return y.updatedAt.localeCompare(x.updatedAt)
+      })
+  }, [state.assets, category, query, selectedTags, sort, usedByCount])
 
   const clearFilters = () => {
     setCategory("all")
     setQuery("")
     setTags([])
+    setSort("updated")
   }
 
   const confirmDelete = () => {
@@ -527,17 +542,15 @@ export function AssetLibrary() {
           >
             <TagsIcon className="size-3.5" />
             标签
-            {tags.length > 0 && (
-              <span className="flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-4 font-medium text-primary-foreground tabular-nums">
-                {tags.length}
-              </span>
+            {selectedTags.length > 0 && (
+              <Badge className="min-w-4 px-1 text-[10px] tabular-nums">{selectedTags.length}</Badge>
             )}
             <ChevronDownIcon className="size-3.5 text-muted-foreground" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="max-h-72 w-56 overflow-y-auto p-1.5">
+          <DropdownMenuContent align="start" className="max-h-[min(18rem,var(--available-height))] w-56 overflow-y-auto p-1.5">
             <div className="flex items-center justify-between px-1.5 py-1">
               <span className="text-xs font-medium text-muted-foreground">按标签筛选</span>
-              {tags.length > 0 && (
+              {selectedTags.length > 0 && (
                 <button
                   type="button"
                   onClick={() => setTags([])}
@@ -551,12 +564,14 @@ export function AssetLibrary() {
               <p className="px-1.5 py-4 text-center text-xs text-muted-foreground">暂无标签，可在编辑资产时添加</p>
             ) : (
               allTags.map((t) => {
-                const on = tags.includes(t)
+                const on = selectedTags.includes(t)
                 return (
                   <button
                     key={t}
                     type="button"
-                    onClick={() => setTags(on ? tags.filter((x) => x !== t) : [...tags, t])}
+                    role="menuitemcheckbox"
+                    aria-checked={on}
+                    onClick={() => setTags(on ? selectedTags.filter((x) => x !== t) : [...selectedTags, t])}
                     className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-sm transition-colors hover:bg-accent ${
                       on ? "text-foreground" : "text-muted-foreground"
                     }`}
@@ -575,7 +590,7 @@ export function AssetLibrary() {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
-        <Select value={sort} onValueChange={(v) => setSort((v ?? "updated") as "updated" | "used")}>
+        <Select value={sort} onValueChange={(v) => setSort((v ?? "updated") as SortKey)}>
           <SelectTrigger aria-label="排序" className="h-8 gap-1.5 text-xs">
             <ArrowUpDownIcon className="size-3.5 text-muted-foreground" />
             <SelectValue />
@@ -598,7 +613,7 @@ export function AssetLibrary() {
         {state.assets.length > 0 && (
           <span className="text-xs text-muted-foreground tabular-nums">共 {filtered.length} 个</span>
         )}
-        {(category !== "all" || query.trim() || tags.length > 0) && (
+        {hasFilters && (
           <Button
             variant="ghost"
             size="sm"
@@ -610,15 +625,15 @@ export function AssetLibrary() {
         )}
       </div>
       {/* 已选标签 chips（点击 × 移除） */}
-      {tags.length > 0 && (
+      {selectedTags.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
-          {tags.map((t) => (
+          {selectedTags.map((t) => (
             <Badge key={t} variant="secondary" className="gap-1 pr-1 text-[11px]">
               {t}
               <button
                 type="button"
                 aria-label={`移除标签 ${t}`}
-                onClick={() => setTags(tags.filter((x) => x !== t))}
+                onClick={() => setTags(selectedTags.filter((x) => x !== t))}
                 className="rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-foreground"
               >
                 <XIcon className="size-3" />
@@ -644,18 +659,7 @@ export function AssetLibrary() {
             />
           ))}
         </div>
-      ) : query.trim() || category !== "all" ? (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-14 text-center">
-          <SearchIcon className="size-8 text-muted-foreground/40" />
-          <p className="text-sm font-medium text-muted-foreground">没有匹配的资产</p>
-          <p className="max-w-sm text-xs leading-relaxed text-muted-foreground/70">
-            试试调整搜索关键词或切换分类
-          </p>
-          <Button variant="outline" size="sm" onClick={clearFilters}>
-            清除筛选
-          </Button>
-        </div>
-      ) : (
+      ) : state.assets.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-14 text-center">
           <FolderOpenIcon className="size-8 text-muted-foreground/40" />
           <p className="text-sm font-medium text-muted-foreground">资产库还是空的</p>
@@ -671,6 +675,17 @@ export function AssetLibrary() {
             }}
           >
             <PlusIcon /> 创建第一张资产卡
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-14 text-center">
+          <SearchIcon className="size-8 text-muted-foreground/40" />
+          <p className="text-sm font-medium text-muted-foreground">没有匹配的资产</p>
+          <p className="max-w-sm text-xs leading-relaxed text-muted-foreground/70">
+            试试调整搜索关键词、分类或标签筛选
+          </p>
+          <Button variant="outline" size="sm" onClick={clearFilters}>
+            清除筛选
           </Button>
         </div>
       )}

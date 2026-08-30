@@ -92,11 +92,14 @@ export function ProjectGrid() {
   // 折叠状态（内存级：刷新恢复全展开，避免 hydration 不一致）
   const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({})
 
-  const groups = {
-    idle: projects.filter((p) => ["queued", "failed", "draft"].includes(p.status)),
-    active: projects.filter((p) => ["executing", "waiting_approval"].includes(p.status)),
-    done: projects.filter((p) => p.status === "completed"),
-  }
+  const groups = React.useMemo(
+    () => ({
+      idle: projects.filter((p) => ["queued", "failed", "draft"].includes(p.status)),
+      active: projects.filter((p) => ["executing", "waiting_approval"].includes(p.status)),
+      done: projects.filter((p) => p.status === "completed"),
+    }),
+    [projects],
+  )
 
   return (
     <div className="space-y-4">
