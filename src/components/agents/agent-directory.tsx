@@ -76,17 +76,17 @@ export function AgentDirectory() {
                       </div>
                       <Badge className={`absolute left-2.5 top-2.5 border ${st.className}`}>{st.label}</Badge>
                     </div>
-                    <div className="flex flex-1 flex-col gap-2 p-3.5">
+                    <div className="flex flex-1 flex-col gap-3 p-4">
                       <p className="text-sm font-semibold leading-tight">{a.name}</p>
                       <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{a.description}</p>
-                      <div className="space-y-1.5">
+                      <div className="space-y-2">
                         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                           <span>历史均分</span>
                           <span className="font-medium tabular-nums">{a.avgScore ?? "—"}/100</span>
                         </div>
                         <Progress value={a.avgScore ?? 0} className={a.avgScore == null ? "h-1 opacity-30" : "h-1"} />
                       </div>
-                      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <div className="flex flex-wrap items-center gap-2 text-[11px]">
                         <Badge variant="outline" className="gap-1 text-[11px] font-normal">
                           <CpuIcon className="size-3" /> {model?.options.find((o) => o.id === model.selected)?.label ?? "未分配"}
                         </Badge>
@@ -100,7 +100,7 @@ export function AgentDirectory() {
                         ))}
                       </div>
                       {/* 能力约束：门禁规则（qa 角色）与迭代上限来自引擎接线/元数据 */}
-                      <div className="mt-auto flex flex-wrap items-center gap-1.5 rounded-md bg-muted/40 px-2.5 py-2 text-[11px]">
+                      <div className="mt-auto flex flex-wrap items-center gap-2 rounded-md bg-muted/40 px-3 py-2.5 text-[11px]">
                         {gate && (
                           <Badge className={`border ${st.className}`}>
                             门禁 · ≥{GATE_PASS_SCORE} 分通过 / 最多打回 {GATE_MAX_RETRIES} 次

@@ -74,11 +74,11 @@ export function KnowledgeBoard() {
                 {kb.enabled ? "已启用" : "已停用"}
               </Badge>
             </div>
-            <div className="flex flex-1 flex-col gap-2 p-3.5">
+            <div className="flex flex-1 flex-col gap-3 p-4">
               <p className="text-sm font-semibold leading-tight">{kb.name}</p>
               <p className="text-xs text-muted-foreground">{kb.entries.toLocaleString()} 条 · 更新于 {timeAgo(kb.updatedAt)}</p>
               <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{kb.description}</p>
-              <div className="mt-auto flex flex-wrap items-center gap-1.5">
+              <div className="mt-auto flex flex-wrap items-center gap-2">
                 <span className="text-[11px] text-muted-foreground/70">服务</span>
                 {kb.serves.map((s) => (
                   <Badge key={s} variant="secondary" className="text-[11px]">{s}</Badge>
@@ -86,7 +86,7 @@ export function KnowledgeBoard() {
               </div>
             </div>
             {/* 底部状态条（-mt-4 抵消 Card 内置 gap，紧贴内容区） */}
-            <div className="-mt-4 flex items-center justify-between bg-muted/50 px-3.5 py-2.5">
+            <div className="-mt-4 flex items-center justify-between bg-muted/50 px-4 py-3">
               <span className="text-[11px] text-muted-foreground">
                 {kb.enabled ? "参与智能体检索" : "不参与智能体检索"}
               </span>
