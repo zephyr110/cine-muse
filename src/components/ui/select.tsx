@@ -63,7 +63,8 @@ function SelectContent({
   sideOffset = 4,
   align = "center",
   alignOffset = 0,
-  alignItemWithTrigger = true,
+  // 全局默认弹出面板宽度自适应内容（不强制与 trigger 同宽）；需要时调用方显式传 true
+  alignItemWithTrigger = false,
   ...props
 }: SelectPrimitive.Popup.Props &
   Pick<
