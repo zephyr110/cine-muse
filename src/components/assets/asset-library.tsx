@@ -1,0 +1,415 @@
+"use client"
+
+/**
+ * 资产库（Asset Library）
+ * - 用户自行维护的角色/场景/道具/风格素材卡，全局唯一
+ * - 项目通过绑定（AssetBinding）引用资产，agents 在对应环节消费（见 engine/templates.ts）
+ * - 被项目引用的资产禁止硬删（引用保护）
+ */
+
+import * as React from "react"
+import {
+  BoxIcon,
+  LandmarkIcon,
+  LibraryBigIcon,
+  PaletteIcon,
+  PencilIcon,
+  PlusIcon,
+  SearchIcon,
+  Trash2Icon,
+  UserRoundIcon,
+} from "lucide-react"
+
+import { useApp } from "@/lib/store"
+import { ASSET_CATEGORY_LABEL } from "@/lib/types"
+import type { Asset, AssetCategory } from "@/lib/types"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+
+const CATEGORY_ICON: Record<AssetCategory, React.ReactNode> = {
+  character: <UserRoundIcon className="size-4" />,
+  scene: <LandmarkIcon className="size-4" />,
+  prop: <BoxIcon className="size-4" />,
+  style: <PaletteIcon className="size-4" />,
+}
+
+const CATEGORY_TABS: { id: AssetCategory | "all"; label: string }[] = [
+  { id: "all", label: "全部" },
+  { id: "character", label: "角色" },
+  { id: "scene", label: "场景" },
+  { id: "prop", label: "道具" },
+  { id: "style", label: "风格" },
+]
+
+const COLOR_OPTIONS = [
+  "from-indigo-500/40 to-violet-500/25",
+  "from-rose-500/40 to-pink-500/25",
+  "from-cyan-500/40 to-blue-500/25",
+  "from-amber-400/40 to-orange-500/25",
+  "from-emerald-500/40 to-teal-500/25",
+  "from-slate-600/40 to-slate-900/45",
+]
+
+const CATEGORIES: AssetCategory[] = ["character", "scene", "prop", "style"]
+
+/* ---------- 新建 / 编辑表单 ---------- */
+
+const EMPTY_FORM = { name: "", category: "character" as AssetCategory, description: "", tags: "", color: COLOR_OPTIONS[0] }
+
+function AssetFormDialog({
+  open,
+  onOpenChange,
+  editing,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  editing: Asset | null
+}) {
+  const { dispatch } = useApp()
+  // 父组件以 key 重挂载（每次打开都是全新表单），初始值在挂载时推导
+  const [form, setForm] = React.useState(() =>
+    editing
+      ? { name: editing.name, category: editing.category, description: editing.description, tags: editing.tags.join("、"), color: editing.color }
+      : EMPTY_FORM,
+  )
+
+  const submit = () => {
+    const name = form.name.trim()
+    if (name.length < 1) return
+    const payload = {
+      name,
+      category: form.category,
+      description: form.description.trim(),
+      tags: form.tags.split(/[、,，\s]+/).filter(Boolean),
+      color: form.color,
+    }
+    if (editing) {
+      dispatch({ type: "UPDATE_ASSET", assetId: editing.id, patch: payload, now: new Date().toISOString() })
+    } else {
+      dispatch({ type: "CREATE_ASSET", input: payload, now: new Date().toISOString() })
+    }
+    onOpenChange(false)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{editing ? `编辑「${editing.name}」` : "新建资产卡"}</DialogTitle>
+          <DialogDescription>
+            资产是全局素材，项目通过绑定引用。绑定后 agents 会在对应环节消费它作为生成约束。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="grid grid-cols-[1fr_140px] gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="ast-name">名称</Label>
+              <Input
+                id="ast-name"
+                placeholder="例如：阿岚（拾荒者）"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>分类</Label>
+              <Select
+                value={form.category}
+                onValueChange={(v) => setForm({ ...form, category: (v ?? "character") as AssetCategory })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {CATEGORIES.map((c) => (
+                    <SelectItem key={c} value={c}>{ASSET_CATEGORY_LABEL[c]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="ast-desc">设定描述</Label>
+            <Textarea
+              id="ast-desc"
+              placeholder="视觉/设定描述，将注入对应 Agent 的生成提示词（例如：女 28 岁 · 旧军大衣 + 金属义手）"
+              rows={3}
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="ast-tags">检索标签</Label>
+            <Input
+              id="ast-tags"
+              placeholder="用顿号分隔，例如：科幻、赛博朋克、女性"
+              value={form.tags}
+              onChange={(e) => setForm({ ...form, tags: e.target.value })}
+            />
+            <p className="text-[11px] text-muted-foreground">标签命中项目题材/风格时，会在新建项目向导中标记「推荐」</p>
+          </div>
+          <div className="space-y-2">
+            <Label>封面配色</Label>
+            <div className="flex gap-2">
+              {COLOR_OPTIONS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-label="选择封面配色"
+                  onClick={() => setForm({ ...form, color: c })}
+                  className={`size-7 rounded-md bg-gradient-to-br ${c} border ${form.color === c ? "border-primary ring-2 ring-primary/30" : "border-border"}`}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
+          <Button disabled={form.name.trim().length < 1} onClick={submit}>
+            {editing ? "保存修改" : "创建资产"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/* ---------- 资产卡片 ---------- */
+
+function AssetCard({
+  asset,
+  usedBy,
+  onEdit,
+  onDelete,
+}: {
+  asset: Asset
+  usedBy: number
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  const deleteDisabled = usedBy > 0
+  return (
+    <Card className="flex flex-col overflow-hidden transition-shadow hover:shadow-md">
+      {/* 封面 */}
+      <div className={`relative flex h-24 items-center justify-center bg-gradient-to-br ${asset.color}`}>
+        <div className="flex size-10 items-center justify-center rounded-xl bg-background/70 backdrop-blur">
+          {CATEGORY_ICON[asset.category]}
+        </div>
+        <Badge variant="secondary" className="absolute left-2.5 top-2.5 bg-background/70 text-[11px] backdrop-blur">
+          {ASSET_CATEGORY_LABEL[asset.category]}
+        </Badge>
+      </div>
+      {/* 内容 */}
+      <div className="flex flex-1 flex-col gap-2 p-3.5">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-sm font-semibold leading-tight">{asset.name}</p>
+          <div className="flex shrink-0 gap-0.5">
+            <Button variant="ghost" size="icon" className="size-7" onClick={onEdit} aria-label={`编辑 ${asset.name}`}>
+              <PencilIcon className="size-3.5" />
+            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button variant="ghost" size="icon" className="size-7 text-red-500 hover:text-red-500" disabled={deleteDisabled} onClick={onDelete} aria-label={`删除 ${asset.name}`}>
+                    <Trash2Icon className="size-3.5" />
+                  </Button>
+                }
+              >
+                {deleteDisabled && <TooltipContent>已被 {usedBy} 个项目绑定，请先解除引用</TooltipContent>}
+              </TooltipTrigger>
+            </Tooltip>
+          </div>
+        </div>
+        <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{asset.description || "（未填写描述）"}</p>
+        <div className="mt-auto flex flex-wrap items-center gap-1 pt-1">
+          {asset.tags.slice(0, 3).map((t) => (
+            <span key={t} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{t}</span>
+          ))}
+          {asset.tags.length > 3 && (
+            <span className="text-[11px] text-muted-foreground/60">+{asset.tags.length - 3}</span>
+          )}
+          <span className={`ml-auto text-[11px] ${usedBy > 0 ? "text-primary" : "text-muted-foreground/60"}`}>
+            {usedBy > 0 ? `引用于 ${usedBy} 个项目` : "未使用"}
+          </span>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+/* ---------- 主组件 ---------- */
+
+export function AssetLibrary() {
+  const { state, dispatch } = useApp()
+  const [category, setCategory] = React.useState<AssetCategory | "all">("all")
+  const [query, setQuery] = React.useState("")
+  const [formOpen, setFormOpen] = React.useState(false)
+  const [editing, setEditing] = React.useState<Asset | null>(null)
+  const [deleting, setDeleting] = React.useState<Asset | null>(null)
+
+  // 每个资产被引用的项目数（派生）
+  const usedByCount = React.useMemo(() => {
+    const map = new Map<string, number>()
+    for (const p of state.projects) {
+      for (const b of p.assets) {
+        map.set(b.assetId, (map.get(b.assetId) ?? 0) + 1)
+      }
+    }
+    return map
+  }, [state.projects])
+
+  const filtered = state.assets.filter((a) => {
+    if (category !== "all" && a.category !== category) return false
+    const q = query.trim().toLowerCase()
+    if (!q) return true
+    return (
+      a.name.toLowerCase().includes(q) ||
+      a.description.toLowerCase().includes(q) ||
+      a.tags.some((t) => t.toLowerCase().includes(q))
+    )
+  })
+
+  const confirmDelete = () => {
+    if (!deleting) return
+    dispatch({ type: "DELETE_ASSET", assetId: deleting.id, now: new Date().toISOString() })
+    setDeleting(null)
+  }
+
+  return (
+    <div className="flex animate-in fade-in-0 slide-in-from-bottom-2 duration-500 flex-col gap-5 p-4 md:p-6">
+      {/* 头部 */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight">资产库</h1>
+          <p className="text-xs text-muted-foreground">全局素材，项目绑定后由对应环节的智能体自动消费</p>
+        </div>
+        <Button
+          className="ml-auto"
+          onClick={() => {
+            setEditing(null)
+            setFormOpen(true)
+          }}
+        >
+          <PlusIcon /> 新建资产
+        </Button>
+      </div>
+
+      {/* 筛选 */}
+      <div className="flex flex-wrap items-center gap-3">
+        <Tabs value={category} onValueChange={(v) => setCategory((v ?? "all") as AssetCategory | "all")}>
+          <TabsList>
+            {CATEGORY_TABS.map((t) => (
+              <TabsTrigger key={t.id} value={t.id} className="text-xs">{t.label}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <div className="relative ml-auto w-full max-w-60">
+          <SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="搜索名称 / 描述 / 标签"
+            className="pl-8"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* 网格 */}
+      {filtered.length > 0 ? (
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
+          {filtered.map((a) => (
+            <AssetCard
+              key={a.id}
+              asset={a}
+              usedBy={usedByCount.get(a.id) ?? 0}
+              onEdit={() => {
+                setEditing(a)
+                setFormOpen(true)
+              }}
+              onDelete={() => setDeleting(a)}
+            />
+          ))}
+        </div>
+      ) : query.trim() || category !== "all" ? (
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-14 text-center">
+          <SearchIcon className="size-8 text-muted-foreground/40" />
+          <p className="text-sm font-medium text-muted-foreground">没有匹配的资产</p>
+          <p className="max-w-sm text-xs leading-relaxed text-muted-foreground/70">
+            试试调整搜索关键词或切换分类
+          </p>
+          <Button variant="outline" size="sm" onClick={() => { setQuery(""); setCategory("all") }}>
+            清除筛选
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-14 text-center">
+          <LibraryBigIcon className="size-8 text-muted-foreground/40" />
+          <p className="text-sm font-medium text-muted-foreground">资产库还是空的</p>
+          <p className="max-w-sm text-xs leading-relaxed text-muted-foreground/70">
+            创建角色/场景/道具/风格卡后，新建项目向导会按题材与风格自动推荐绑定。
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setEditing(null)
+              setFormOpen(true)
+            }}
+          >
+            <PlusIcon /> 创建第一张资产卡
+          </Button>
+        </div>
+      )}
+
+      {/* 新建/编辑 */}
+      <AssetFormDialog key={formOpen ? (editing?.id ?? "new") : "closed"} open={formOpen} onOpenChange={setFormOpen} editing={editing} />
+
+      {/* 删除确认 */}
+      <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除「{deleting?.name}」？</AlertDialogTitle>
+            <AlertDialogDescription>
+              此操作不可撤销。若该资产正被项目绑定，将被系统拒绝并提示解除引用。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleting(null)}>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-red-600 text-white hover:bg-red-600/90">
+              <Trash2Icon /> 确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}

@@ -1,0 +1,228 @@
+/**
+ * Cine Studio 本地后端服务
+ * - 认证（注册/登录/登出/找回/修改密码）：服务端 scrypt 哈希 + token 会话
+ * - /api/state：AppState 全量读写（前端防抖推送）
+ * - 仅监听 127.0.0.1，不暴露局域网；无服务时前端回退 localStorage
+ * - 启动方式：Electron 主进程内嵌 require + listen；独立运行 `node server/index.js`
+ */
+
+const crypto = require("node:crypto")
+const express = require("express")
+const cors = require("cors")
+const { randomUUID } = require("node:crypto")
+
+const db = require("./db")
+
+const { scrypt, randomBytes, timingSafeEqual } = crypto
+const scryptAsync = require("node:util").promisify(scrypt)
+
+const DEFAULT_PORT = 47832
+
+// scrypt 参数显式锁定（N=16384/r=8/p=1 即当前 Node 默认值）：显式传入防止 Node
+// 未来调整默认参数导致存量哈希全部无法校验（哈希不随参数迁移）。
+const SCRYPT_OPTS = { N: 16384, r: 8, p: 1 }
+
+async function hashPassword(password, salt) {
+  const buf = await scryptAsync(password, salt, 64, SCRYPT_OPTS)
+  return buf.toString("hex")
+}
+
+// 账号不存在时也执行一次 scrypt 假校验：抹平「账号不存在」与「密码错误」的响应时长差异
+const DUMMY_SALT = "00000000000000000000000000000000"
+const DUMMY_HASH = "0".repeat(128)
+
+async function verifyPassword(password, salt, storedHex) {
+  const candidate = await hashPassword(password, salt)
+  const stored = Buffer.from(storedHex, "hex")
+  const attempt = Buffer.from(candidate, "hex")
+  return stored.length === attempt.length && stored.length > 0 && timingSafeEqual(stored, attempt)
+}
+
+function newSalt() {
+  return randomBytes(16).toString("hex")
+}
+
+function newToken() {
+  return randomBytes(32).toString("hex")
+}
+
+function isValidEmail(value) {
+  return typeof value === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+}
+
+function uid(prefix) {
+  return `${prefix}_${randomUUID().slice(0, 13)}`
+}
+
+/** 启动服务；返回 http.Server（Electron 主进程在 app.quit 时 close） */
+function startServer({ port = DEFAULT_PORT, dbPath, onReady } = {}) {
+  db.initDb(dbPath)
+
+  const app = express()
+
+  // 本机服务安全边界：仅放行 Electron 渲染层（file://，Origin: null）与本地开发页面
+  // 任意公网网页的 fetch 一律 403（防恶意页面读写状态 / 重置密码）
+  app.use((req, res, next) => {
+    const host = req.headers.host
+    if (!host || !/^127\.0\.0\.1(?::\d+)?$/.test(host)) {
+      return res.status(403).json({ error: "forbidden host" })
+    }
+    const origin = req.headers.origin
+    if (origin && origin !== "null" && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return res.status(403).json({ error: "forbidden origin" })
+    }
+    next()
+  })
+  app.use(cors())
+  app.use(express.json({ limit: "20mb" }))
+  // 畸形 JSON / 超限 body：返回结构化 400 而非 Express 默认 HTML 500
+  app.use((err, _req, res, _next) => {
+    res.status(400).json({ error: "请求体不是合法 JSON" })
+  })
+
+  /* ---------- 健康检查 ---------- */
+
+  app.get("/api/health", (_req, res) => {
+    res.json({ ok: true, mode: "local-backend" })
+  })
+
+  /* ---------- 认证 ---------- */
+
+  // 注册（成功后自动登录，返回 token）
+  app.post("/api/auth/register", async (req, res) => {
+    const { email, name, password } = req.body ?? {}
+    const em = typeof email === "string" ? email.trim().toLowerCase() : ""
+    if (!isValidEmail(em)) return res.status(400).json({ error: "邮箱格式无效" })
+    if (typeof password !== "string" || password.length < 6) {
+      return res.status(400).json({ error: "密码至少需要 6 位" })
+    }
+    if (db.findAccount(em)) return res.status(409).json({ error: "该账号已注册" })
+
+    const salt = newSalt()
+    const passwordHash = await hashPassword(password, salt)
+    const now = new Date().toISOString()
+    db.insertAccount({
+      id: uid("acc"),
+      email: em,
+      name: (name ?? "").trim() || em.split("@")[0],
+      passwordHash,
+      salt,
+      createdAt: now,
+    })
+    const token = newToken()
+    db.createSession(token, em, now)
+    const acc = db.findAccount(em)
+    res.json({ token, email: acc.email, name: acc.name })
+  })
+
+  // 登录
+  app.post("/api/auth/login", async (req, res) => {
+    const { email, password } = req.body ?? {}
+    const em = typeof email === "string" ? email.trim().toLowerCase() : ""
+    const acc = db.findAccount(em)
+    if (typeof password !== "string") return res.status(401).json({ error: "账号或密码不正确" })
+    // 账号不存在时对固定假哈希执行同成本校验：抹平时序侧信道
+    const ok = await verifyPassword(password, acc?.salt ?? DUMMY_SALT, acc?.password_hash ?? DUMMY_HASH)
+    if (!ok || !acc) return res.status(401).json({ error: "账号或密码不正确" })
+
+    const token = newToken()
+    db.createSession(token, em, new Date().toISOString())
+    res.json({ token, email: acc.email, name: acc.name })
+  })
+
+  // 登出（使 token 失效）
+  app.post("/api/auth/logout", (req, res) => {
+    const token = req.headers.authorization?.replace(/^Bearer\s+/i, "")
+    if (token) db.deleteSession(token)
+    res.json({ ok: true })
+  })
+
+  // 会话恢复（刷新页面用）
+  app.get("/api/auth/me", (req, res) => {
+    const token = req.headers.authorization?.replace(/^Bearer\s+/i, "")
+    const session = token ? db.findSession(token) : undefined
+    if (!session) return res.status(401).json({ error: "未登录" })
+    const acc = db.findAccount(session.email)
+    if (!acc) return res.status(401).json({ error: "账号不存在" })
+    res.json({ email: acc.email, name: acc.name })
+  })
+
+  // 找回密码 · 步骤 1：验证账号存在
+  app.post("/api/auth/verify-account", (req, res) => {
+    const { email } = req.body ?? {}
+    const em = typeof email === "string" ? email.trim().toLowerCase() : ""
+    if (!db.findAccount(em)) return res.status(404).json({ error: "该账号不存在" })
+    res.json({ ok: true })
+  })
+
+  // 找回密码 · 步骤 2：设置新密码（演示环境不发邮件，验证账号后直接重置）
+  app.post("/api/auth/reset-password", async (req, res) => {
+    const { email, password } = req.body ?? {}
+    const em = typeof email === "string" ? email.trim().toLowerCase() : ""
+    if (!db.findAccount(em)) return res.status(404).json({ error: "该账号不存在" })
+    if (typeof password !== "string" || password.length < 6) {
+      return res.status(400).json({ error: "密码至少需要 6 位" })
+    }
+    const salt = newSalt()
+    db.updatePassword(em, await hashPassword(password, salt), salt)
+    db.deleteSessionsByEmail(em)
+    res.json({ ok: true })
+  })
+
+  // 修改密码（需登录 + 旧密码）
+  app.post("/api/auth/change-password", async (req, res) => {
+    const token = req.headers.authorization?.replace(/^Bearer\s+/i, "")
+    const session = token ? db.findSession(token) : undefined
+    if (!session) return res.status(401).json({ error: "未登录" })
+    const acc = db.findAccount(session.email)
+    if (!acc) return res.status(401).json({ error: "账号不存在" })
+
+    const { oldPassword, newPassword } = req.body ?? {}
+    if (typeof oldPassword !== "string") return res.status(400).json({ error: "缺少当前密码" })
+    if (typeof newPassword !== "string" || newPassword.length < 6) {
+      return res.status(400).json({ error: "新密码至少需要 6 位" })
+    }
+    const ok = await verifyPassword(oldPassword, acc.salt, acc.password_hash)
+    if (!ok) return res.status(400).json({ error: "当前密码不正确" })
+
+    const salt = newSalt()
+    db.updatePassword(session.email, await hashPassword(newPassword, salt), salt)
+    // 改密后吊销该账号其他会话（保留当前 token），防止旧 token 继续有效
+    db.deleteSessionsByEmail(session.email, token)
+    res.json({ ok: true })
+  })
+
+  /* ---------- AppState ---------- */
+
+  app.get("/api/state", (_req, res) => {
+    const json = db.loadStateJson()
+    if (json == null) return res.status(404).json({ error: "no state" })
+    res.type("application/json").send(json)
+  })
+
+  app.put("/api/state", (req, res) => {
+    if (typeof req.body !== "object" || req.body == null || Array.isArray(req.body)) {
+      return res.status(400).json({ error: "body 必须是 JSON 对象" })
+    }
+    db.saveStateJson(JSON.stringify(req.body))
+    res.json({ ok: true })
+  })
+
+  const server = app.listen(port, "127.0.0.1", () => {
+    console.log(`[cine-server] listening on http://127.0.0.1:${port}`)
+    onReady?.(port)
+  })
+  server.on("error", (err) => {
+    console.error(`[cine-server] listen failed on ${port}:`, err.code ?? err.message)
+  })
+  return server
+}
+
+/* 独立运行：node server/index.js [port] */
+if (require.main === module) {
+  const port = Number(process.argv[2] ?? process.env.CINE_SERVER_PORT ?? DEFAULT_PORT)
+  // CINE_DB_PATH 与 Electron 内嵌模式共用同一 db 文件（默认 ~/.cine-studio/cine-studio.db）
+  startServer({ port, dbPath: process.env.CINE_DB_PATH })
+}
+
+module.exports = { startServer, DEFAULT_PORT }

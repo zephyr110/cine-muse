@@ -11,7 +11,10 @@ const eslintConfig = defineConfig([
     ".next/**",
     "out/**",
     "build/**",
+    "dist-electron/**",
     "next-env.d.ts",
+    // Node 服务（CommonJS + require），不适用前端 TS 规则
+    "server/**",
   ]),
 ]);
 

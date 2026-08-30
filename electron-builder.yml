@@ -1,0 +1,21 @@
+appId: com.cinestudio.desktop
+productName: Cine Studio
+directories:
+  output: release
+files:
+  - out/**/*
+  - dist-electron/**/*
+  - server/**/*
+asarUnpack:
+  - node_modules/better-sqlite3/**/*
+mac:
+  category: public.app-category.video
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
