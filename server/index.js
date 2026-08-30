@@ -9,6 +9,10 @@
 const crypto = require("node:crypto")
 const express = require("express")
 const cors = require("cors")
+const fs = require("node:fs")
+const os = require("node:os")
+const path = require("node:path")
+const multer = require("multer")
 const { randomUUID } = require("node:crypto")
 
 const db = require("./db")
@@ -17,6 +21,27 @@ const { scrypt, randomBytes, timingSafeEqual } = crypto
 const scryptAsync = require("node:util").promisify(scrypt)
 
 const DEFAULT_PORT = 47832
+
+// 资产上传：主流格式白名单（扩展名 + MIME 双重校验），单文件上限 50MB
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+const FILE_TYPE_RULES = {
+  image: {
+    exts: [".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".avif", ".bmp"],
+    mimes: ["image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml", "image/avif", "image/bmp"],
+  },
+  video: {
+    exts: [".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v"],
+    mimes: ["video/mp4", "video/webm", "video/quicktime", "video/x-matroska", "video/x-msvideo", "video/x-m4v"],
+  },
+  audio: {
+    exts: [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"],
+    mimes: ["audio/mpeg", "audio/wav", "audio/flac", "audio/aac", "audio/ogg", "audio/mp4"],
+  },
+}
+const EXT_TO_KIND = {}
+for (const [kind, rule] of Object.entries(FILE_TYPE_RULES)) {
+  for (const ext of rule.exts) EXT_TO_KIND[ext] = kind
+}
 
 // scrypt 参数显式锁定（N=16384/r=8/p=1 即当前 Node 默认值）：显式传入防止 Node
 // 未来调整默认参数导致存量哈希全部无法校验（哈希不随参数迁移）。
@@ -190,6 +215,67 @@ function startServer({ port = DEFAULT_PORT, dbPath, onReady } = {}) {
     // 改密后吊销该账号其他会话（保留当前 token），防止旧 token 继续有效
     db.deleteSessionsByEmail(session.email, token)
     res.json({ ok: true })
+  })
+
+  /* ---------- 资产文件上传 ---------- */
+
+  const dbFile = dbPath ?? path.join(os.homedir(), ".cine-studio", "cine-studio.db")
+  const uploadsDir = path.join(path.dirname(dbFile), "uploads")
+  fs.mkdirSync(uploadsDir, { recursive: true })
+
+  // 已上传文件静态服务（路径穿越由 express.static 防护；仅本机可访问）
+  app.use("/uploads", express.static(uploadsDir, { maxAge: "7d", fallthrough: false, index: false }))
+
+  const upload = multer({
+    storage: multer.diskStorage({
+      destination: uploadsDir,
+      filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase()
+        cb(null, `${randomUUID().slice(0, 13)}${ext}`)
+      },
+    }),
+    limits: { fileSize: MAX_UPLOAD_BYTES },
+    fileFilter: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase()
+      const rule = FILE_TYPE_RULES[EXT_TO_KIND[ext]]
+      if (!rule || !rule.mimes.includes(file.mimetype)) {
+        return cb(new Error("仅支持主流图片 / 视频 / 音频格式"))
+      }
+      cb(null, true)
+    },
+  })
+
+  // 上传：multipart/form-data，字段名 file；返回相对 url（前端拼接 API_URL）
+  app.post("/api/assets/upload", (req, res) => {
+    upload.single("file")(req, res, (err) => {
+      if (err) {
+        const msg = err.code === "LIMIT_FILE_SIZE" ? `文件超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB 上限` : err.message || "上传失败"
+        return res.status(400).json({ error: msg })
+      }
+      const f = req.file
+      if (!f) return res.status(400).json({ error: "缺少文件字段 file" })
+      const kind = EXT_TO_KIND[path.extname(f.originalname).toLowerCase()]
+      res.json({
+        url: `/uploads/${f.filename}`,
+        kind,
+        mimeType: f.mimetype,
+        size: f.size,
+        name: f.originalname,
+      })
+    })
+  })
+
+  // 删除已上传文件（仅限 uploads 目录内的合法文件名）
+  app.delete("/api/uploads/:name", (req, res) => {
+    const name = path.basename(req.params.name)
+    const ext = path.extname(name).toLowerCase()
+    if (!EXT_TO_KIND[ext] || name !== req.params.name) {
+      return res.status(400).json({ error: "非法文件名" })
+    }
+    fs.unlink(path.join(uploadsDir, name), (err) => {
+      if (err) return res.status(404).json({ error: "文件不存在" })
+      res.json({ ok: true })
+    })
   })
 
   /* ---------- AppState ---------- */

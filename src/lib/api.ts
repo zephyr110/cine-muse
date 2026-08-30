@@ -5,6 +5,8 @@
  * - 服务不可用时调用方回退本地存储（见 store.tsx）
  */
 
+import type { AssetFile } from "@/lib/types"
+
 export const API_URL =
   process.env.NEXT_PUBLIC_CINE_API_URL ?? "http://127.0.0.1:47832"
 
@@ -51,6 +53,34 @@ export async function apiJson<T = unknown>(
     throw err
   }
   return body as T
+}
+
+/** 上传素材文件（multipart）；成功返回服务器生成的 AssetFile（url 为相对路径） */
+export async function uploadAssetFile(file: File): Promise<AssetFile> {
+  const form = new FormData()
+  form.append("file", file)
+  const headers = new Headers()
+  const token = getToken()
+  if (token) headers.set("Authorization", `Bearer ${token}`)
+  const res = await fetch(`${API_URL}/api/assets/upload`, { method: "POST", body: form, headers })
+  const body = await res.json().catch(() => null)
+  if (!res.ok) {
+    throw new Error((body as { error?: string } | null)?.error ?? `上传失败（${res.status}）`)
+  }
+  return body as AssetFile
+}
+
+/** 删除已上传文件（尽力而为：引用保护在 reducer 层，文件删除失败仅告警） */
+export async function deleteAssetFile(url: string): Promise<void> {
+  const headers = new Headers()
+  const token = getToken()
+  if (token) headers.set("Authorization", `Bearer ${token}`)
+  await fetch(`${API_URL}${url}`, { method: "DELETE", headers })
+}
+
+/** 素材文件相对 url -> 可展示的绝对地址 */
+export function assetFileUrl(url: string): string {
+  return `${API_URL}${url}`
 }
 
 /** 服务可用性探测（TTL 10s 缓存：启动竞速与服务中途崩溃后允许重探） */

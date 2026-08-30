@@ -10,19 +10,28 @@
 import * as React from "react"
 import {
   BoxIcon,
+  FileAudioIcon,
+  FileVideoIcon,
+  ImageIcon,
   LandmarkIcon,
   LibraryBigIcon,
+  LoaderCircleIcon,
   PaletteIcon,
   PencilIcon,
   PlusIcon,
   SearchIcon,
   Trash2Icon,
+  UploadCloudIcon,
   UserRoundIcon,
+  XIcon,
 } from "lucide-react"
+import { toast } from "sonner"
 
 import { useApp } from "@/lib/store"
+import { assetFileUrl, deleteAssetFile, uploadAssetFile } from "@/lib/api"
+import { formatBytes } from "@/lib/format"
 import { ASSET_CATEGORY_LABEL } from "@/lib/types"
-import type { Asset, AssetCategory } from "@/lib/types"
+import type { Asset, AssetCategory, AssetFile } from "@/lib/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -56,6 +65,12 @@ import {
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+
+const FILE_KIND_LABEL: Record<AssetFile["kind"], string> = {
+  image: "图片",
+  video: "视频",
+  audio: "音频",
+}
 
 const CATEGORY_ICON: Record<AssetCategory, React.ReactNode> = {
   character: <UserRoundIcon className="size-4" />,
@@ -103,22 +118,59 @@ function AssetFormDialog({
       ? { name: editing.name, category: editing.category, description: editing.description, tags: editing.tags.join("、"), color: editing.color }
       : EMPTY_FORM,
   )
+  // 素材文件：新选文件（上传后落库）或编辑时已存在的 file
+  const [file, setFile] = React.useState<File | null>(null)
+  const [uploading, setUploading] = React.useState(false)
+  const [fileErr, setFileErr] = React.useState("")
+  // 新选文件的本地预览（objectURL 随 dialog 卸载回收；仅新选文件需要，已有文件用服务器 url）
+  const previewUrl = React.useMemo(() => (file ? URL.createObjectURL(file) : null), [file])
+  React.useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+  }, [previewUrl])
+  const previewSrc = previewUrl ?? (editing?.file ? assetFileUrl(editing.file.url) : null)
+  const previewKind: AssetFile["kind"] | null = file
+    ? file.type.startsWith("image/")
+      ? "image"
+      : file.type.startsWith("video/")
+        ? "video"
+        : "audio"
+    : editing?.file?.kind ?? null
 
-  const submit = () => {
+  const pickFile = (f: File | null | undefined) => {
+    if (!f) return
+    setFileErr("")
+    setFile(f)
+  }
+
+  const submit = async () => {
     const name = form.name.trim()
-    if (name.length < 1) return
+    if (name.length < 1 || uploading) return
+    // 先上传文件拿服务器记录，再落库（失败不创建资产）
+    let fileMeta: AssetFile | undefined
+    if (file) {
+      setUploading(true)
+      try {
+        fileMeta = await uploadAssetFile(file)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "上传失败")
+        setUploading(false)
+        return
+      }
+    }
     const payload = {
       name,
       category: form.category,
       description: form.description.trim(),
       tags: form.tags.split(/[、,，\s]+/).filter(Boolean),
       color: form.color,
+      ...(fileMeta ? { file: fileMeta } : {}),
     }
     if (editing) {
       dispatch({ type: "UPDATE_ASSET", assetId: editing.id, patch: payload, now: new Date().toISOString() })
     } else {
       dispatch({ type: "CREATE_ASSET", input: payload, now: new Date().toISOString() })
     }
+    setUploading(false)
     onOpenChange(false)
   }
 
@@ -191,10 +243,78 @@ function AssetFormDialog({
               ))}
             </div>
           </div>
+          {/* 素材文件（可选）：点击 / 拖拽上传，主流图片/视频/音频格式 */}
+          <div className="space-y-2">
+            <Label>素材文件</Label>
+            <label
+              className={`flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed px-4 py-5 text-center transition-colors hover:border-primary/50 hover:bg-muted/30 ${
+                fileErr ? "border-red-500/60" : "border-border"
+              }`}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault()
+                pickFile(e.dataTransfer.files?.[0])
+              }}
+            >
+              <input
+                type="file"
+                className="sr-only"
+                accept="image/*,video/*,audio/*"
+                onChange={(e) => {
+                  pickFile(e.target.files?.[0])
+                  e.target.value = "" // 允许连续选择同一文件
+                }}
+              />
+              {uploading ? (
+                <LoaderCircleIcon className="size-5 animate-spin text-muted-foreground" />
+              ) : (
+                <UploadCloudIcon className="size-5 text-muted-foreground" />
+              )}
+              <span className="text-xs text-muted-foreground">
+                {uploading ? "正在上传…" : "点击或拖拽上传图片 / 视频 / 音频（≤ 50MB）"}
+              </span>
+            </label>
+            {fileErr && <p className="text-[11px] text-red-500">{fileErr}</p>}
+            {(file || editing?.file) && previewSrc && (
+              <div className="flex items-center gap-2.5 rounded-md border bg-muted/30 p-2">
+                <div className="size-10 shrink-0 overflow-hidden rounded-md bg-muted">
+                  {previewKind === "image" ? (
+                    <img src={previewSrc} alt="" className="size-full object-cover" />
+                  ) : previewKind === "video" ? (
+                    <video src={previewSrc} muted playsInline preload="metadata" className="size-full object-cover" />
+                  ) : (
+                    <div className="flex size-full items-center justify-center text-muted-foreground">
+                      <FileAudioIcon className="size-4" />
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-medium">{file?.name ?? editing?.file?.name ?? ""}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {FILE_KIND_LABEL[previewKind ?? "image"]} · {formatBytes(file?.size ?? editing?.file?.size ?? 0)}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0"
+                  aria-label="移除文件"
+                  disabled={uploading}
+                  onClick={() => {
+                    setFile(null)
+                    setFileErr("")
+                  }}
+                >
+                  <XIcon className="size-3.5" />
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
-          <Button disabled={form.name.trim().length < 1} onClick={submit}>
+          <Button disabled={form.name.trim().length < 1 || uploading} onClick={submit}>
+            {uploading ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
             {editing ? "保存修改" : "创建资产"}
           </Button>
         </DialogFooter>
@@ -219,15 +339,40 @@ function AssetCard({
   const deleteDisabled = usedBy > 0
   return (
     <Card className="flex flex-col overflow-hidden transition-shadow hover:shadow-md">
-      {/* 封面 */}
-      <div className={`relative flex h-24 items-center justify-center bg-gradient-to-br ${asset.color}`}>
-        <div className="flex size-10 items-center justify-center rounded-xl bg-background/70 backdrop-blur">
-          {CATEGORY_ICON[asset.category]}
+      {/* 封面：有素材文件时渲染媒体预览，否则渐变色占位 */}
+      {asset.file ? (
+        <div className={`relative h-28 overflow-hidden bg-gradient-to-br ${asset.color}`}>
+          {asset.file.kind === "image" && (
+            <img src={assetFileUrl(asset.file.url)} alt={asset.name} className="absolute inset-0 h-full w-full object-cover" />
+          )}
+          {asset.file.kind === "video" && (
+            <video src={assetFileUrl(asset.file.url)} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
+          )}
+          {asset.file.kind === "audio" && (
+            <div className="absolute inset-0 grid place-items-center">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-background/70 backdrop-blur">
+                <FileAudioIcon className="size-5" />
+              </div>
+            </div>
+          )}
+          <Badge variant="secondary" className="absolute left-2.5 top-2.5 bg-background/70 text-[11px] backdrop-blur">
+            {ASSET_CATEGORY_LABEL[asset.category]}
+          </Badge>
+          <Badge className="absolute right-2.5 top-2.5 gap-1 bg-black/50 text-[11px] text-white">
+            {asset.file.kind === "image" ? <ImageIcon className="size-3" /> : asset.file.kind === "video" ? <FileVideoIcon className="size-3" /> : <FileAudioIcon className="size-3" />}
+            {FILE_KIND_LABEL[asset.file.kind]}
+          </Badge>
         </div>
-        <Badge variant="secondary" className="absolute left-2.5 top-2.5 bg-background/70 text-[11px] backdrop-blur">
-          {ASSET_CATEGORY_LABEL[asset.category]}
-        </Badge>
-      </div>
+      ) : (
+        <div className={`relative flex h-24 items-center justify-center bg-gradient-to-br ${asset.color}`}>
+          <div className="flex size-10 items-center justify-center rounded-xl bg-background/70 backdrop-blur">
+            {CATEGORY_ICON[asset.category]}
+          </div>
+          <Badge variant="secondary" className="absolute left-2.5 top-2.5 bg-background/70 text-[11px] backdrop-blur">
+            {ASSET_CATEGORY_LABEL[asset.category]}
+          </Badge>
+        </div>
+      )}
       {/* 内容 */}
       <div className="flex flex-1 flex-col gap-2 p-3.5">
         <div className="flex items-start justify-between gap-2">
@@ -251,6 +396,7 @@ function AssetCard({
         </div>
         <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{asset.description || "（未填写描述）"}</p>
         <div className="mt-auto flex flex-wrap items-center gap-1 pt-1">
+          {asset.file && <span className="text-[11px] text-muted-foreground/60">{formatBytes(asset.file.size)}</span>}
           {asset.tags.slice(0, 3).map((t) => (
             <span key={t} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{t}</span>
           ))}
@@ -300,6 +446,8 @@ export function AssetLibrary() {
 
   const confirmDelete = () => {
     if (!deleting) return
+    // 引用保护在 reducer 层；文件删除尽力而为（失败不阻塞资产删除）
+    if (deleting.file) void deleteAssetFile(deleting.file.url).catch(() => {})
     dispatch({ type: "DELETE_ASSET", assetId: deleting.id, now: new Date().toISOString() })
     setDeleting(null)
   }

@@ -101,13 +101,25 @@ export const ASSET_CATEGORY_LABEL: Record<AssetCategory, string> = {
   style: "风格",
 }
 
+/** 素材文件类型（主流格式白名单见 server/index.js FILE_TYPE_RULES） */
+export type AssetFileKind = "image" | "video" | "audio"
+
+export interface AssetFile {
+  url: string // 相对路径 /uploads/xxx.ext，渲染时拼接 API_URL
+  kind: AssetFileKind
+  mimeType: string
+  size: number // 字节
+  name: string // 原始文件名
+}
+
 export interface Asset {
   id: string
   name: string
   category: AssetCategory
   description: string // 视觉/设定描述（真实版为素材文件 + 元数据）
   tags: string[] // 检索标签（genre/风格/年代等）
-  color: string // 封面渐变色占位
+  color: string // 封面渐变色占位（无文件时展示）
+  file?: AssetFile // 用户上传的素材文件；无文件时保持描述卡
   createdAt: string
   updatedAt: string
 }
