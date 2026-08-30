@@ -20,7 +20,7 @@ import {
   SearchIcon,
   Trash2Icon,
   UploadCloudIcon,
-  UserRoundIcon,
+  UsersRoundIcon,
   XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -71,7 +71,7 @@ const FILE_KIND_LABEL: Record<AssetFile["kind"], string> = {
 }
 
 const CATEGORY_ICON: Record<AssetCategory, React.ReactNode> = {
-  character: <UserRoundIcon className="size-4" />,
+  character: <UsersRoundIcon className="size-4" />,
   scene: <LandmarkIcon className="size-4" />,
   prop: <BoxIcon className="size-4" />,
   style: <PaletteIcon className="size-4" />,

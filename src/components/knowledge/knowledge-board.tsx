@@ -10,7 +10,7 @@ import {
   MusicIcon,
   PaletteIcon,
   ShirtIcon,
-  UsersIcon,
+  UsersRoundIcon,
 } from "lucide-react"
 
 import { useApp } from "@/lib/store"
@@ -29,7 +29,7 @@ const ICONS: Record<string, React.ReactNode> = {
   award: <AwardIcon className="size-4.5" />,
   palette: <PaletteIcon className="size-4.5" />,
   shirt: <ShirtIcon className="size-4.5" />,
-  users: <UsersIcon className="size-4.5" />,
+  users: <UsersRoundIcon className="size-4.5" />,
   landmark: <LandmarkIcon className="size-4.5" />,
   music: <MusicIcon className="size-4.5" />,
 }
