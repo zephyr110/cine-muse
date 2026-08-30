@@ -176,7 +176,7 @@ function AssetFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-2xl!">
         <DialogHeader>
           <DialogTitle>{editing ? `编辑「${editing.name}」` : "新建资产卡"}</DialogTitle>
           <DialogDescription>
