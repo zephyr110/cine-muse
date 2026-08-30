@@ -6,12 +6,10 @@ import {
   CheckCircle2Icon,
   ChevronDownIcon,
   ClapperboardIcon,
-  ClockIcon,
   FilmIcon,
   GaugeIcon,
   InboxIcon,
   LoaderCircleIcon,
-  SparklesIcon,
   UserCheckIcon,
 } from "lucide-react"
 
@@ -30,14 +28,14 @@ export function ProjectCard({ project }: { project: Project }) {
   const nextStage = project.stages.find((s) => s.status === "running" || s.status === "iterating")
 
   return (
-    <Card className="group overflow-hidden transition-colors hover:border-primary/40">
+    <Card className="group overflow-hidden transition-shadow hover:shadow-md">
       <Link href={`/projects?id=${project.id}`} className="block">
         {/* 封面 */}
         <div className={`relative flex h-28 items-center justify-center bg-gradient-to-br ${project.cover}`}>
           <FilmIcon className="size-9 text-foreground/40 transition-transform group-hover:scale-110" />
-          <Badge className={`absolute left-3 top-3 border ${meta.className}`}>{meta.label}</Badge>
+          <Badge className={`absolute left-2.5 top-2.5 border ${meta.className}`}>{meta.label}</Badge>
           {waitingStages.length > 0 && (
-            <Badge className="absolute right-3 top-3 gap-1 status-warn">
+            <Badge className="absolute right-2.5 top-2.5 gap-1 status-warn">
               <UserCheckIcon className="size-3" /> 待确认 {waitingStages.length}
             </Badge>
           )}
@@ -51,17 +49,14 @@ export function ProjectCard({ project }: { project: Project }) {
         <CardContent className="space-y-3">
           <p className="line-clamp-2 min-h-8 text-xs text-muted-foreground">{project.premise}</p>
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span className="flex items-center gap-1">
-                {project.status === "completed" ? (
-                  <><ClapperboardIcon className="size-3" /> 已交付</>
-                ) : nextStage ? (
-                  <><ClockIcon className="size-3" /> {nextStage.title}</>
-                ) : (
-                  <><SparklesIcon className="size-3" /> 排队中</>
-                )}
-              </span>
-              <span className="flex items-center gap-1 font-medium tabular-nums">
+            <div className="flex h-4 items-center gap-1.5 text-xs text-muted-foreground">
+              {nextStage && (
+                <span className="flex min-w-0 items-center gap-1">
+                  <LoaderCircleIcon className="size-3 shrink-0" />
+                  <span className="truncate">{nextStage.title}</span>
+                </span>
+              )}
+              <span className="ml-auto flex items-center gap-1 font-medium tabular-nums">
                 <GaugeIcon className="size-3" />
                 {project.avgScore ?? "—"}
               </span>

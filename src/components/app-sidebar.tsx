@@ -129,7 +129,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarFooter>
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={<Button variant="ghost" className="mt-2 w-full justify-start gap-2.5 px-3 py-2" />}
+            render={<Button variant="ghost" className="mt-2 h-auto w-full justify-start gap-2.5 px-3 py-2.5" />}
           >
             <Avatar className="size-6 rounded-full">
               <AvatarFallback className="rounded-full bg-primary/10 text-xs text-primary">

@@ -64,33 +64,19 @@ export function KnowledgeBoard() {
       ) : (
       <div className="grid gap-4 @3xl:grid-cols-2 @7xl:grid-cols-3">
         {state.knowledgeBases.map((kb) => (
-          <Card key={kb.id} className={kb.enabled ? "" : "opacity-70"}>
-            <CardHeader className="flex-row items-start justify-between space-y-0">
+          <Card key={kb.id} className={`flex flex-col ${kb.enabled ? "" : "opacity-70"}`}>
+            <CardHeader className="flex-row items-start space-y-0">
               <div className="flex items-center gap-3">
                 <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
                   {ICONS[kb.icon] ?? <DatabaseIcon className="size-4.5" />}
                 </div>
                 <div>
-                  <CardTitle className="flex items-center gap-1.5 text-sm">
-                    {kb.name}
-                    {!kb.enabled && (
-                      <Badge variant="outline" className="text-[10px] status-draft">已停用</Badge>
-                    )}
-                  </CardTitle>
+                  <CardTitle className="flex items-center gap-1.5 text-sm">{kb.name}</CardTitle>
                   <p className="text-xs text-muted-foreground">{kb.entries.toLocaleString()} 条 · 更新于 {timeAgo(kb.updatedAt)}</p>
                 </div>
               </div>
-              <Tooltip>
-                <TooltipTrigger render={<div />}>
-                    <Switch
-                      checked={kb.enabled}
-                      onCheckedChange={() => dispatch({ type: "TOGGLE_KNOWLEDGE_BASE", kbId: kb.id, now: new Date().toISOString() })}
-                    />
-                  </TooltipTrigger>
-                <TooltipContent>{kb.enabled ? "点击停用该知识库" : "点击启用该知识库"}</TooltipContent>
-              </Tooltip>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="flex-1 space-y-3">
               <p className="text-xs leading-relaxed text-muted-foreground">{kb.description}</p>
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[11px] text-muted-foreground/70">服务</span>
@@ -99,6 +85,23 @@ export function KnowledgeBoard() {
                 ))}
               </div>
             </CardContent>
+            <div className="mt-auto flex items-center justify-between border-t px-4 py-2.5">
+              <span className="text-[11px] text-muted-foreground">
+                {kb.enabled ? "参与智能体检索" : "已停用 · 不参与检索"}
+              </span>
+              <Tooltip>
+                <TooltipTrigger render={<div />}>
+                  <Switch
+                    aria-label={`${kb.enabled ? "停用" : "启用"} ${kb.name}`}
+                    checked={kb.enabled}
+                    onCheckedChange={() => dispatch({ type: "TOGGLE_KNOWLEDGE_BASE", kbId: kb.id, now: new Date().toISOString() })}
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {kb.enabled ? "停用后各环节智能体将不再检索该知识库" : "启用后各环节智能体可检索该知识库增强产出"}
+                </TooltipContent>
+              </Tooltip>
+            </div>
           </Card>
         ))}
       </div>

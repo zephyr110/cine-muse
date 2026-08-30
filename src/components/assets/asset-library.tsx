@@ -358,13 +358,13 @@ function AssetCard({
           <Badge variant="secondary" className="absolute left-2.5 top-2.5 bg-background/70 text-[11px] backdrop-blur">
             {ASSET_CATEGORY_LABEL[asset.category]}
           </Badge>
-          <Badge className="absolute right-2.5 top-2.5 gap-1 bg-black/50 text-[11px] text-white">
+          <Badge className="absolute bottom-2.5 right-2.5 gap-1 bg-black/50 text-[11px] text-white">
             {asset.file.kind === "image" ? <ImageIcon className="size-3" /> : asset.file.kind === "video" ? <FileVideoIcon className="size-3" /> : <FileAudioIcon className="size-3" />}
             {FILE_KIND_LABEL[asset.file.kind]}
           </Badge>
         </div>
       ) : (
-        <div className={`relative flex h-24 items-center justify-center bg-gradient-to-br ${asset.color}`}>
+        <div className={`relative flex h-28 items-center justify-center bg-gradient-to-br ${asset.color}`}>
           <div className="flex size-10 items-center justify-center rounded-xl bg-background/70 backdrop-blur">
             {CATEGORY_ICON[asset.category]}
           </div>
@@ -394,7 +394,9 @@ function AssetCard({
             </Tooltip>
           </div>
         </div>
-        <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{asset.description || "（未填写描述）"}</p>
+        {asset.description && (
+          <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{asset.description}</p>
+        )}
         <div className="mt-auto flex flex-wrap items-center gap-1 pt-1">
           {asset.file && <span className="text-[11px] text-muted-foreground/60">{formatBytes(asset.file.size)}</span>}
           {asset.tags.slice(0, 3).map((t) => (
