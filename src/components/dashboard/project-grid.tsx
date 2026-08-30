@@ -29,10 +29,15 @@ export function ProjectCard({ project }: { project: Project }) {
 
   return (
     <Card className="group overflow-hidden pt-0! transition-shadow hover:shadow-md">
-      <Link href={`/projects?id=${project.id}`} className="block">
-        {/* 封面 */}
-        <div className={`relative flex h-28 items-center justify-center bg-gradient-to-br ${project.cover}`}>
-          <FilmIcon className="size-9 text-foreground/40 transition-transform group-hover:scale-110" />
+      <Link
+        href={`/projects?id=${project.id}`}
+        className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60"
+      >
+        {/* 封面：高度高于资产/知识库卡，匹配宽卡片比例；图标沿用统一的徽章式容器 */}
+        <div className={`relative flex h-32 items-center justify-center bg-gradient-to-br ${project.cover}`}>
+          <div className="flex size-10 items-center justify-center rounded-xl bg-background/70 backdrop-blur transition-transform duration-300 group-hover:scale-110">
+            <FilmIcon className="size-5" />
+          </div>
           <Badge className={`absolute left-2.5 top-2.5 border ${meta.className}`}>{meta.label}</Badge>
           {waitingStages.length > 0 && (
             <Badge className="absolute right-2.5 top-2.5 gap-1 status-warn">
@@ -40,19 +45,20 @@ export function ProjectCard({ project }: { project: Project }) {
             </Badge>
           )}
         </div>
-        <CardHeader className="pt-4 pb-2">
+        <CardHeader className="pt-4 pb-3">
           <CardTitle className="text-base leading-tight">{project.title}</CardTitle>
           <p className="line-clamp-1 text-xs text-muted-foreground">
             {project.genre} · {project.style} · {formatMinutes(project.durationSec)} · {project.aspectRatio}
           </p>
         </CardHeader>
         <CardContent className="space-y-3">
-          <p className="line-clamp-2 min-h-8 text-xs text-muted-foreground">{project.premise}</p>
+          {/* min-h-10 与两行高度一致：不同行数的 premise 下，状态行与进度条跨卡片对齐 */}
+          <p className="line-clamp-2 min-h-10 text-xs leading-relaxed text-muted-foreground">{project.premise}</p>
           <div className="space-y-1.5">
             <div className="flex h-4 items-center gap-1.5 text-xs text-muted-foreground">
               {nextStage && (
                 <span className="flex min-w-0 items-center gap-1">
-                  <LoaderCircleIcon className="size-3 shrink-0" />
+                  <LoaderCircleIcon className="size-3 shrink-0 animate-spin" />
                   <span className="truncate">{nextStage.title}</span>
                 </span>
               )}
@@ -103,13 +109,13 @@ export function ProjectGrid() {
               type="button"
               aria-expanded={open}
               onClick={() => setCollapsed((prev) => ({ ...prev, [g.key]: !prev[g.key] }))}
-              className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-muted/40"
+              className="flex w-full items-center gap-3 p-4 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60 active:bg-muted/60"
             >
               <span className={`flex size-8 shrink-0 items-center justify-center rounded-md ${g.accent}`}>
                 {g.icon}
               </span>
               <span className="text-sm font-semibold">{g.label}</span>
-              <Badge variant="secondary" className="text-[11px]">{items.length}</Badge>
+              <Badge variant="secondary" className="text-[11px] tabular-nums">{items.length}</Badge>
               <span className="hidden text-xs text-muted-foreground sm:inline">{g.hint}</span>
               <ChevronDownIcon
                 className={`ml-auto size-4 text-muted-foreground transition-transform duration-300 ${open ? "" : "-rotate-90"}`}
@@ -130,7 +136,7 @@ export function ProjectGrid() {
                       ))}
                     </div>
                   ) : (
-                    <p className="py-6 text-center text-xs text-muted-foreground">
+                    <p className="py-8 text-center text-xs text-muted-foreground">
                       暂无{g.label}的项目
                     </p>
                   )}
