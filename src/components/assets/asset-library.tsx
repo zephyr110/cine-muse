@@ -9,7 +9,10 @@
 
 import * as React from "react"
 import {
+  ArrowUpDownIcon,
   BoxIcon,
+  CheckIcon,
+  ChevronDownIcon,
   FileAudioIcon,
   LandmarkIcon,
   FolderOpenIcon,
@@ -18,6 +21,7 @@ import {
   PencilIcon,
   PlusIcon,
   SearchIcon,
+  TagsIcon,
   Trash2Icon,
   UploadCloudIcon,
   UsersRoundIcon,
@@ -55,6 +59,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -84,6 +93,11 @@ const CATEGORY_TABS: { id: AssetCategory | "all"; label: string }[] = [
   { id: "prop", label: "道具" },
   { id: "style", label: "风格" },
 ]
+
+const SORT_OPTIONS = [
+  { value: "updated", label: "最近更新" },
+  { value: "used", label: "使用最多" },
+] as const
 
 const COLOR_OPTIONS = [
   "from-indigo-500/40 to-violet-500/25",
@@ -417,6 +431,8 @@ export function AssetLibrary() {
   const { state, dispatch } = useApp()
   const [category, setCategory] = React.useState<AssetCategory | "all">("all")
   const [query, setQuery] = React.useState("")
+  const [tags, setTags] = React.useState<string[]>([])
+  const [sort, setSort] = React.useState<"updated" | "used">("updated")
   const [formOpen, setFormOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<Asset | null>(null)
   const [deleting, setDeleting] = React.useState<Asset | null>(null)
@@ -432,16 +448,42 @@ export function AssetLibrary() {
     return map
   }, [state.projects])
 
-  const filtered = state.assets.filter((a) => {
-    if (category !== "all" && a.category !== category) return false
-    const q = query.trim().toLowerCase()
-    if (!q) return true
-    return (
-      a.name.toLowerCase().includes(q) ||
-      a.description.toLowerCase().includes(q) ||
-      a.tags.some((t) => t.toLowerCase().includes(q))
-    )
-  })
+  // 全库标签聚合，按使用频率降序（标签筛选候选项）
+  const allTags = React.useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const a of state.assets) {
+      for (const t of a.tags) counts.set(t, (counts.get(t) ?? 0) + 1)
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh"))
+      .map(([t]) => t)
+  }, [state.assets])
+
+  const filtered = state.assets
+    .filter((a) => {
+      if (category !== "all" && a.category !== category) return false
+      if (tags.length > 0 && !tags.every((t) => a.tags.includes(t))) return false
+      const q = query.trim().toLowerCase()
+      if (!q) return true
+      return (
+        a.name.toLowerCase().includes(q) ||
+        a.description.toLowerCase().includes(q) ||
+        a.tags.some((t) => t.toLowerCase().includes(q))
+      )
+    })
+    .sort((x, y) => {
+      if (sort === "used") {
+        const d = (usedByCount.get(y.id) ?? 0) - (usedByCount.get(x.id) ?? 0)
+        if (d !== 0) return d
+      }
+      return y.updatedAt.localeCompare(x.updatedAt)
+    })
+
+  const clearFilters = () => {
+    setCategory("all")
+    setQuery("")
+    setTags([])
+  }
 
   const confirmDelete = () => {
     if (!deleting) return
@@ -470,8 +512,8 @@ export function AssetLibrary() {
         </Button>
       </div>
 
-      {/* 筛选 */}
-      <div className="flex flex-wrap items-center gap-3">
+      {/* 筛选：分类 Tabs + 标签多选 + 排序 + 搜索 */}
+      <div className="flex flex-wrap items-center gap-2">
         <Tabs value={category} onValueChange={(v) => setCategory((v ?? "all") as AssetCategory | "all")}>
           <TabsList>
             {CATEGORY_TABS.map((t) => (
@@ -479,6 +521,71 @@ export function AssetLibrary() {
             ))}
           </TabsList>
         </Tabs>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<Button variant="outline" className="h-8 gap-1.5 text-xs" />}
+          >
+            <TagsIcon className="size-3.5" />
+            标签
+            {tags.length > 0 && (
+              <span className="flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-4 font-medium text-primary-foreground tabular-nums">
+                {tags.length}
+              </span>
+            )}
+            <ChevronDownIcon className="size-3.5 text-muted-foreground" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="max-h-72 w-56 overflow-y-auto p-1.5">
+            <div className="flex items-center justify-between px-1.5 py-1">
+              <span className="text-xs font-medium text-muted-foreground">按标签筛选</span>
+              {tags.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setTags([])}
+                  className="text-xs text-primary hover:underline"
+                >
+                  清除
+                </button>
+              )}
+            </div>
+            {allTags.length === 0 ? (
+              <p className="px-1.5 py-4 text-center text-xs text-muted-foreground">暂无标签，可在编辑资产时添加</p>
+            ) : (
+              allTags.map((t) => {
+                const on = tags.includes(t)
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTags(on ? tags.filter((x) => x !== t) : [...tags, t])}
+                    className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-sm transition-colors hover:bg-accent ${
+                      on ? "text-foreground" : "text-muted-foreground"
+                    }`}
+                  >
+                    <span
+                      className={`flex size-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors ${
+                        on ? "border-primary bg-primary text-primary-foreground" : "border-input"
+                      }`}
+                    >
+                      {on && <CheckIcon className="size-3" />}
+                    </span>
+                    <span className="truncate">{t}</span>
+                  </button>
+                )
+              })
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Select value={sort} onValueChange={(v) => setSort((v ?? "updated") as "updated" | "used")}>
+          <SelectTrigger aria-label="排序" className="h-8 gap-1.5 text-xs">
+            <ArrowUpDownIcon className="size-3.5 text-muted-foreground" />
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SORT_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value} label={o.label}>{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <div className="relative ml-auto w-full max-w-60">
           <SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -488,7 +595,38 @@ export function AssetLibrary() {
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
+        {state.assets.length > 0 && (
+          <span className="text-xs text-muted-foreground tabular-nums">共 {filtered.length} 个</span>
+        )}
+        {(category !== "all" || query.trim() || tags.length > 0) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+            onClick={clearFilters}
+          >
+            <XIcon className="size-3" /> 重置
+          </Button>
+        )}
       </div>
+      {/* 已选标签 chips（点击 × 移除） */}
+      {tags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {tags.map((t) => (
+            <Badge key={t} variant="secondary" className="gap-1 pr-1 text-[11px]">
+              {t}
+              <button
+                type="button"
+                aria-label={`移除标签 ${t}`}
+                onClick={() => setTags(tags.filter((x) => x !== t))}
+                className="rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <XIcon className="size-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      )}
 
       {/* 网格 */}
       {filtered.length > 0 ? (
@@ -513,7 +651,7 @@ export function AssetLibrary() {
           <p className="max-w-sm text-xs leading-relaxed text-muted-foreground/70">
             试试调整搜索关键词或切换分类
           </p>
-          <Button variant="outline" size="sm" onClick={() => { setQuery(""); setCategory("all") }}>
+          <Button variant="outline" size="sm" onClick={clearFilters}>
             清除筛选
           </Button>
         </div>
