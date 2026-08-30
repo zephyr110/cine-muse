@@ -16,7 +16,7 @@ import {
   METRIC_BY_AGENT,
 } from "@/lib/engine/templates"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import {
   Tooltip,
@@ -68,22 +68,17 @@ export function AgentDirectory() {
                 const kbs = state.knowledgeBases.filter((kb) => a.usesRag.includes(kb.id) && kb.enabled)
                 const model = state.models.find((m) => m.id === a.modelId)
                 return (
-                  <Card key={a.id}>
-                    <CardHeader className="flex-row items-start justify-between space-y-0">
-                      <div className="flex items-center gap-3">
-                        <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                          <BotIcon className="size-4.5" />
-                        </div>
-                        <div>
-                          <CardTitle className="flex items-center gap-2 text-sm">
-                            {a.name}
-                            <Badge variant="outline" className={`border ${st.className}`}>{st.label}</Badge>
-                          </CardTitle>
-                        </div>
+                  <Card key={a.id} className="overflow-hidden pt-0! transition-shadow hover:shadow-md">
+                    {/* 封面：与资产卡同高的状态区 */}
+                    <div className="relative flex h-28 items-center justify-center bg-gradient-to-br from-blue-500/40 to-violet-500/25">
+                      <div className="flex size-10 items-center justify-center rounded-xl bg-background/70 backdrop-blur">
+                        <BotIcon className="size-5" />
                       </div>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <p className="text-xs leading-relaxed text-muted-foreground">{a.description}</p>
+                      <Badge className={`absolute left-2.5 top-2.5 border ${st.className}`}>{st.label}</Badge>
+                    </div>
+                    <div className="flex flex-1 flex-col gap-2 p-3.5">
+                      <p className="text-sm font-semibold leading-tight">{a.name}</p>
+                      <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{a.description}</p>
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                           <span>历史均分</span>
@@ -98,14 +93,14 @@ export function AgentDirectory() {
                         {kbs.map((kb) => (
                           <Tooltip key={kb.id}>
                             <TooltipTrigger render={<Badge variant="secondary" className="gap-1 text-[11px] font-normal" />}>
-                                <LibraryBigIcon className="size-3" /> {kb.name}
-                              </TooltipTrigger>
+                              <LibraryBigIcon className="size-3" /> {kb.name}
+                            </TooltipTrigger>
                             <TooltipContent>检索 {kb.name} 增强产出</TooltipContent>
                           </Tooltip>
                         ))}
                       </div>
                       {/* 能力约束：门禁规则（qa 角色）与迭代上限来自引擎接线/元数据 */}
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-md bg-muted/40 px-2.5 py-2 text-[11px]">
+                      <div className="mt-auto flex flex-wrap items-center gap-1.5 rounded-md bg-muted/40 px-2.5 py-2 text-[11px]">
                         {gate && (
                           <Badge className={`border ${st.className}`}>
                             门禁 · ≥{GATE_PASS_SCORE} 分通过 / 最多打回 {GATE_MAX_RETRIES} 次
@@ -116,7 +111,7 @@ export function AgentDirectory() {
                           <span className="text-muted-foreground">评估维度：{metrics.map((m) => m.label).join(" / ")}</span>
                         )}
                       </div>
-                    </CardContent>
+                    </div>
                   </Card>
                 )
               })}

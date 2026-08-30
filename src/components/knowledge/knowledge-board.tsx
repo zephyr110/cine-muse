@@ -16,7 +16,7 @@ import {
 import { useApp } from "@/lib/store"
 import { timeAgo } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
 import { Switch } from "@/components/ui/switch"
 import {
   Tooltip,
@@ -64,30 +64,31 @@ export function KnowledgeBoard() {
       ) : (
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
         {state.knowledgeBases.map((kb) => (
-          <Card key={kb.id} className={`flex flex-col ${kb.enabled ? "" : "opacity-70"}`}>
-            <CardHeader className="flex-row items-start space-y-0">
-              <div className="flex items-center gap-3">
-                <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  {ICONS[kb.icon] ?? <DatabaseIcon className="size-4.5" />}
-                </div>
-                <div>
-                  <CardTitle className="flex items-center gap-1.5 text-sm">{kb.name}</CardTitle>
-                  <p className="text-xs text-muted-foreground">{kb.entries.toLocaleString()} 条 · 更新于 {timeAgo(kb.updatedAt)}</p>
-                </div>
+          <Card key={kb.id} className={`overflow-hidden pt-0! pb-0! transition-shadow hover:shadow-md ${kb.enabled ? "" : "opacity-70"}`}>
+            {/* 封面：与资产卡同高的状态区 */}
+            <div className="relative flex h-28 items-center justify-center bg-gradient-to-br from-emerald-500/40 to-teal-500/25">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-background/70 backdrop-blur">
+                {ICONS[kb.icon] ?? <DatabaseIcon className="size-4.5" />}
               </div>
-            </CardHeader>
-            <CardContent className="flex-1 space-y-3">
-              <p className="text-xs leading-relaxed text-muted-foreground">{kb.description}</p>
-              <div className="flex flex-wrap items-center gap-1.5">
+              <Badge className={`absolute left-2.5 top-2.5 border ${kb.enabled ? "status-done" : "status-draft"}`}>
+                {kb.enabled ? "已启用" : "已停用"}
+              </Badge>
+            </div>
+            <div className="flex flex-1 flex-col gap-2 p-3.5">
+              <p className="text-sm font-semibold leading-tight">{kb.name}</p>
+              <p className="text-xs text-muted-foreground">{kb.entries.toLocaleString()} 条 · 更新于 {timeAgo(kb.updatedAt)}</p>
+              <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{kb.description}</p>
+              <div className="mt-auto flex flex-wrap items-center gap-1.5">
                 <span className="text-[11px] text-muted-foreground/70">服务</span>
                 {kb.serves.map((s) => (
                   <Badge key={s} variant="secondary" className="text-[11px]">{s}</Badge>
                 ))}
               </div>
-            </CardContent>
-            <div className="mt-auto flex items-center justify-between bg-muted/50 px-4 py-2.5">
+            </div>
+            {/* 底部状态条（-mt-4 抵消 Card 内置 gap，紧贴内容区） */}
+            <div className="-mt-4 flex items-center justify-between bg-muted/50 px-3.5 py-2.5">
               <span className="text-[11px] text-muted-foreground">
-                {kb.enabled ? "参与智能体检索" : "已停用 · 不参与检索"}
+                {kb.enabled ? "参与智能体检索" : "不参与智能体检索"}
               </span>
               <Tooltip>
                 <TooltipTrigger render={<div />}>
