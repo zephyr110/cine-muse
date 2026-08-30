@@ -10,8 +10,6 @@ import {
   LayoutDashboardIcon,
   FolderOpenIcon,
   LogOutIcon,
-  MonitorIcon,
-  MoonIcon,
   NotebookIcon,
   Settings2Icon,
   SunIcon,
@@ -40,12 +38,7 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -60,10 +53,17 @@ const NAV = [
   ]},
 ]
 
+const THEME_OPTIONS = [
+  { value: "light", label: "浅色" },
+  { value: "system", label: "系统" },
+  { value: "dark", label: "深色" },
+] as const
+
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
   const { state, dispatch } = useApp()
   const { theme, setTheme } = useTheme()
+  const themeIndex = Math.max(0, THEME_OPTIONS.findIndex((t) => t.value === theme))
   const router = useRouter()
   const user = state.user
   const [settingsOpen, setSettingsOpen] = React.useState(false)
@@ -141,7 +141,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <span className="truncate text-xs text-muted-foreground">{user?.email ?? "未登录"}</span>
             </div>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-72 space-y-0.5 p-2">
+          <DropdownMenuContent align="start" className="w-80 space-y-0.5 p-2.5">
             <DropdownMenuGroup>
               <DropdownMenuLabel>
                 <div className="flex flex-col gap-1 px-1 py-1.5">
@@ -151,32 +151,38 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
+            {/* 主题切换：三段式滑块按钮（浅色 | 系统 | 深色） */}
+            <div className="flex items-center justify-between gap-3 px-2.5 py-2">
+              <span className="flex items-center gap-2 text-sm">
+                <SunIcon className="size-4 text-muted-foreground" />
+                主题切换
+              </span>
+              <div className="relative grid h-8 w-40 shrink-0 grid-cols-3 rounded-lg bg-muted p-1">
+                <span
+                  aria-hidden
+                  className="absolute inset-y-1 left-1 w-[calc((100%-0.5rem)/3)] rounded-md bg-background shadow-sm transition-transform duration-200 ease-out"
+                  style={{ transform: `translateX(${themeIndex * 100}%)` }}
+                />
+                {THEME_OPTIONS.map((t) => (
+                  <button
+                    key={t.value}
+                    type="button"
+                    onClick={() => setTheme(t.value)}
+                    className={`relative z-10 rounded-md text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
+                      theme === t.value ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <DropdownMenuItem className="py-2" onClick={() => setSettingsOpen(true)}>
               <Settings2Icon /> 系统设置
             </DropdownMenuItem>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <SunIcon /> 切换主题
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent sideOffset={4}>
-                <DropdownMenuRadioGroup
-                  value={theme}
-                  onValueChange={(v) => setTheme(v as "light" | "dark" | "system")}
-                >
-                  <DropdownMenuRadioItem value="light">
-                    <SunIcon /> 浅色
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="dark">
-                    <MoonIcon /> 深色
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="system">
-                    <MonitorIcon /> 跟随系统
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
             <DropdownMenuSeparator />
             <DropdownMenuItem
+              className="py-2"
               onClick={async () => {
                 await logout()
                 dispatch({ type: "LOGOUT" })
