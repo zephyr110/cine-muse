@@ -366,7 +366,7 @@ export function buildArtifact(
 
 /* ---------- 质量评估模拟 ---------- */
 
-const METRIC_BY_AGENT: Record<string, { key: string; label: string }[]> = {
+export const METRIC_BY_AGENT: Record<string, { key: string; label: string }[]> = {
   screenplay: [
     { key: "structure", label: "结构完整度" },
     { key: "conflict", label: "冲突密度" },
