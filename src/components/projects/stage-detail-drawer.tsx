@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { LoaderCircleIcon, ShieldCheckIcon } from "lucide-react"
+import { LoaderCircleIcon, PenLineIcon, ShieldCheckIcon } from "lucide-react"
 
 import { PolarAngleAxis, RadialBar, RadialBarChart } from "recharts"
 
@@ -20,6 +20,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { STAGE_STATUS_META } from "@/components/projects/workflow-canvas"
+import { PrevisBlockingEditor } from "@/components/projects/previs-blocking-editor"
 
 /** 基于 shadcn Chart（RadialBarChart）二次开发：质量分环形图 */
 function ScoreRing({ score }: { score: number }) {
@@ -86,11 +87,23 @@ function StatCell({ value, unit }: { value: number; unit: string }) {
   )
 }
 
-/** 预演台产物：布景/深度/边缘三图 + 机位与摆位参数 */
-function PrevisPanel({ artifact }: { artifact: PrevisArtifact }) {
+/** 预演台产物：布景/深度/边缘三图 + 机位与摆位参数；manual 模式可进入干预编辑器 */
+function PrevisPanel({ projectId, stage, artifact }: { projectId: string; stage: WorkflowStage; artifact: PrevisArtifact }) {
+  const { state } = useApp()
+  const project = state.projects.find((p) => p.id === projectId)
+  const [editing, setEditing] = React.useState(false)
+
   return (
     <div className="space-y-4">
-      {artifact.shots.map((shot) => (
+      {project?.interventionMode === "manual" && !editing && (
+        <Button size="sm" variant="outline" className="gap-1" onClick={() => setEditing(true)}>
+          <PenLineIcon className="size-3.5" /> 调整摆位与机位
+        </Button>
+      )}
+      {editing ? (
+        <PrevisBlockingEditor projectId={projectId} stage={stage} shotIndex={0} onDone={() => setEditing(false)} />
+      ) : (
+        artifact.shots.map((shot) => (
         <div key={shot.shotIndex} className="space-y-2 rounded-lg border bg-muted/30 p-3">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span className="font-medium">镜头 {shot.shotIndex + 1}</span>
@@ -122,7 +135,8 @@ function PrevisPanel({ artifact }: { artifact: PrevisArtifact }) {
             ))}
           </div>
         </div>
-      ))}
+        ))
+      )}
     </div>
   )
 }
@@ -144,7 +158,7 @@ function ArtifactPanel({ projectId, stage }: { projectId: string; stage: Workflo
   }
 
   if (isPrevisArtifact(a)) {
-    return <PrevisPanel artifact={a} />
+    return <PrevisPanel projectId={projectId} stage={stage} artifact={a} />
   }
 
   const editable =
