@@ -16,6 +16,8 @@ import {
 import { produce } from "immer"
 
 import { createSeedState, uid } from "@/lib/engine/seed"
+import { isPrevisArtifact } from "@/lib/engine/previs-types"
+import { renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { MODE_LABEL } from "@/lib/types"
 import type {
   Action,
@@ -132,6 +134,15 @@ function recomputeProject(p: Project, now: string): Project {
 function startNextStage(state: AppState, project: Project, now: string): boolean {
   const next = project.stages.find((s) => s.status === "pending")
   if (!next) return false
+  // previs 参考附件注入：启动视频生成时，从上游已完成的 previs 产物提取深度/边缘图
+  if (next.agentId === "video_gen") {
+    const previsStage = project.stages.find((s) => s.agentId === "previs" && isPrevisArtifact(s.artifact) && s.status === "completed")
+    const previs = previsStage?.artifact
+    if (previs && isPrevisArtifact(previs)) {
+      const first = previs.shots[0]
+      next.references = [{ kind: "previs", depthUrl: svgDataUrl(first.depthSvg), edgeUrl: svgDataUrl(first.edgeSvg) }]
+    }
+  }
   next.status = "running"
   next.progress = 0
   next.startedAt = now
@@ -457,6 +468,27 @@ export function engineReducer(state: AppState, action: Action): AppState {
           }
         }
         pushEvent(draft, p, "mode_changed", `「${p.title}」干预模式已切换为 ${MODE_LABEL[action.mode]}`, action.now)
+      })
+
+    case "UPDATE_PREVIS_BLOCKING":
+      return produce(state, (draft) => {
+        const p = draft.projects.find((x) => x.id === action.projectId)
+        const s = p?.stages.find((x) => x.id === action.stageId)
+        if (!p || !s || !isPrevisArtifact(s.artifact)) return
+        const shot = s.artifact.shots[action.shotIndex]
+        if (!shot) return
+        shot.blocking = action.blocking
+        Object.assign(shot, renderPrevisShot(shot))
+      })
+
+    case "RERENDER_PREVIS":
+      return produce(state, (draft) => {
+        const p = draft.projects.find((x) => x.id === action.projectId)
+        const s = p?.stages.find((x) => x.id === action.stageId)
+        if (!p || !s || !isPrevisArtifact(s.artifact)) return
+        // isPrevisArtifact 收窄为 Artifact & PrevisArtifact（shots 冲突），用 Object.assign 规避属性写入
+        const shots = s.artifact.shots.map((shot) => renderPrevisShot(shot))
+        Object.assign(s.artifact, { shots })
       })
 
     case "EDIT_ARTIFACT":

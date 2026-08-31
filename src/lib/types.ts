@@ -322,6 +322,8 @@ export type Action =
       now: string
     }
   | { type: "UPDATE_ASSET"; assetId: string; patch: Partial<Asset>; now: string }
+  | { type: "UPDATE_PREVIS_BLOCKING"; projectId: string; stageId: string; shotIndex: number; blocking: BlockingItem[] }
+  | { type: "RERENDER_PREVIS"; projectId: string; stageId: string }
   | { type: "DELETE_ASSET"; assetId: string; now: string }
   | {
       type: "BIND_ASSET"
