@@ -1,6 +1,6 @@
 import type { Artifact, PrevisArtifact, PrevisShot } from "@/lib/types"
 
-export function isPrevisArtifact(a: Artifact | undefined): a is PrevisArtifact {
+export function isPrevisArtifact(a: Artifact | PrevisArtifact | undefined): a is PrevisArtifact {
   return a?.kind === "previs"
 }
 

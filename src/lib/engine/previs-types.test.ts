@@ -3,11 +3,11 @@ import { isPrevisArtifact, makePrevisShot } from "./previs-types"
 
 describe("isPrevisArtifact", () => {
   it("previs artifact 判定为真", () => {
-    const a = { kind: "previs" as const, title: "t", shots: [] }
+    const a = { kind: "previs" as const, title: "t", summary: "", shots: [] }
     expect(isPrevisArtifact(a)).toBe(true)
   })
   it("其他 kind 判定为假", () => {
-    expect(isPrevisArtifact({ kind: "video" as const, title: "t" })).toBe(false)
+    expect(isPrevisArtifact({ kind: "video" as const, title: "t", summary: "" })).toBe(false)
     expect(isPrevisArtifact(undefined)).toBe(false)
   })
 })

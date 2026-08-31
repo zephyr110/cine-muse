@@ -68,7 +68,7 @@ export interface PrevisShot {
 }
 
 /** 判别联合：previs 专用载荷，与通用 Artifact 平级 */
-export interface PrevisArtifact extends Artifact {
+export interface PrevisArtifact extends Omit<Artifact, "shots"> {
   kind: "previs"
   shots: PrevisShot[]
 }
