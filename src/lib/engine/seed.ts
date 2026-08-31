@@ -33,6 +33,7 @@ export const SEED_AGENTS: AgentMeta[] = [
   { id: "visual_qa", name: "视觉质检", group: "qa", description: "画面清晰度、语义匹配度与跨镜头一致性检查", status: "active", modelId: "llm", maxIterations: 3, usesRag: [], avgScore: 89 },
   { id: "voiceover", name: "配音合成", group: "post", description: "多声线 TTS 合成、口型对齐与情绪演绎", status: "active", modelId: "tts", maxIterations: 3, usesRag: [], avgScore: 86 },
   { id: "editing", name: "剪辑合成", group: "post", description: "剪辑节奏、音画同步、混音与成片渲染", status: "active", modelId: "llm", maxIterations: 3, usesRag: [], avgScore: 88 },
+  { id: "previs", name: "空间预演台", group: "pre", description: "分镜驱动场景摆位与机位规划，渲染深度图/边缘图作为视频生成参考附件", status: "active", modelId: "llm", maxIterations: 3, usesRag: ["scene-background", "visual-style"], avgScore: 84 },
 ]
 
 export const SEED_KNOWLEDGE: KnowledgeBase[] = [
@@ -177,6 +178,9 @@ export function buildStardustProject(): Project {
         startedAt: t4,
       }),
       stage("st3", "scene_gen", "场景生成", "关键场景概念设计与背景图生成", "pending"),
+      stage("stg-previs-demo", "previs", "空间预演台", "场景摆位与机位规划，人工确认后进入视频生成", "pending", {
+        isCheckpoint: true,
+      }),
       stage("st4", "video_gen", "视频生成", "分镜驱动逐镜头生成视频片段", "pending", { gate: true, gateAgentName: "视觉质检" }),
       stage("st5", "voiceover", "配音合成", "角色对白与旁白 TTS 合成", "pending"),
       stage("st6", "editing", "剪辑合成", "镜头剪辑、音画同步与成片渲染", "pending", { isCheckpoint: true }),
