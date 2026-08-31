@@ -8,6 +8,7 @@ import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
 const Select = SelectPrimitive.Root
 
+/** Base UI 默认在 trigger 显示 value 原始值；传入 items 后 SelectValue 才渲染对应 label */
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (
     <SelectPrimitive.Group

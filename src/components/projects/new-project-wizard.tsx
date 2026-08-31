@@ -57,6 +57,17 @@ const STYLES: { id: string; desc: string; gradient: string }[] = Object.keys(STY
 
 const DURATIONS = [30, 60, 90, 120, 180, 240]
 
+const DURATION_ITEMS = DURATIONS.map((d) => ({
+  value: String(d),
+  label: `${d / 60} 分钟`,
+}))
+
+const QUALITY_ITEMS: { value: NewProjectInput["quality"]; label: string }[] = [
+  { value: "draft", label: "草稿 (720p)" },
+  { value: "standard", label: "标准 (1080p)" },
+  { value: "hd", label: "高清 (4K)" },
+]
+
 const TEMPLATES: { id: WorkflowTemplate; title: string; desc: string; nodes: { name: string; checkpoint?: boolean }[]; recommended?: boolean }[] = [
   {
     id: "full",
@@ -278,6 +289,7 @@ export function NewProjectWizard() {
                 <Label>目标时长</Label>
                 <Select
                   value={String(form.durationSec)}
+                  items={DURATION_ITEMS}
                   onValueChange={(v) => setForm({ ...form, durationSec: Number(v) })}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -309,6 +321,7 @@ export function NewProjectWizard() {
                 <Label>画质档位</Label>
                 <Select
                   value={form.quality}
+                  items={QUALITY_ITEMS}
                   onValueChange={(v) => setForm({ ...form, quality: v as NewProjectInput["quality"] })}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>

@@ -88,7 +88,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <SidebarGroup className="pt-2">
+        <SidebarGroup className="pt-3">
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
@@ -108,7 +108,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
       <SidebarContent>
         {NAV.map((section) => (
-          <SidebarGroup key={section.group}>
+          <SidebarGroup key={section.group} className="pt-1">
             <SidebarGroupLabel>{section.group}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>

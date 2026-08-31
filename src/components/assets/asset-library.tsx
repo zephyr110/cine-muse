@@ -29,6 +29,7 @@ import {
 } from "lucide-react"
 import { toast } from "@/components/ui/toast"
 
+import { cn } from "@/lib/utils"
 import { useApp } from "@/lib/store"
 import { assetFileUrl, deleteAssetFile, uploadAssetFile } from "@/lib/api"
 import { formatBytes } from "@/lib/format"
@@ -39,6 +40,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { ResourceCard, ResourceCardContent, ResourceCardCover, ResourceCardIcon } from "@/components/ui/resource-card"
 import { Textarea } from "@/components/ui/textarea"
 import {
   Dialog,
@@ -111,6 +113,11 @@ const COLOR_OPTIONS = [
 ]
 
 const CATEGORIES: AssetCategory[] = ["character", "scene", "prop", "style"]
+
+const CATEGORY_ITEMS = CATEGORIES.map((c) => ({
+  value: c,
+  label: ASSET_CATEGORY_LABEL[c],
+}))
 
 /* ---------- 新建 / 编辑表单 ---------- */
 
@@ -212,6 +219,7 @@ function AssetFormDialog({
               <Label>分类</Label>
               <Select
                 value={form.category}
+                items={CATEGORY_ITEMS}
                 onValueChange={(v) => setForm({ ...form, category: (v ?? "character") as AssetCategory })}
               >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
@@ -352,52 +360,57 @@ function AssetCard({
 }) {
   const deleteDisabled = usedBy > 0
   return (
-    <Card className="flex flex-col overflow-hidden pt-0! transition-shadow hover:shadow-md">
-      {/* 封面：有素材文件时渲染媒体预览，否则渐变色占位 */}
+    <ResourceCard interactive className="flex flex-col">
       {asset.file ? (
-        <div className={`relative h-28 overflow-hidden bg-gradient-to-br ${asset.color}`}>
+        <ResourceCardCover className={asset.color}>
           {asset.file.kind === "image" && (
-            <img src={assetFileUrl(asset.file.url)} alt={asset.name} className="absolute inset-0 h-full w-full object-cover" />
+            <img src={assetFileUrl(asset.file.url)} alt={asset.name} className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover/resource:scale-[1.03]" />
           )}
           {asset.file.kind === "video" && (
-            <video src={assetFileUrl(asset.file.url)} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
+            <video src={assetFileUrl(asset.file.url)} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover/resource:scale-[1.03]" />
           )}
           {asset.file.kind === "audio" && (
-            <div className="absolute inset-0 grid place-items-center">
-              <div className="flex size-10 items-center justify-center rounded-xl bg-background/70 backdrop-blur">
+            <div className="flex size-full items-center justify-center">
+              <ResourceCardIcon>
                 <FileAudioIcon className="size-5" />
-              </div>
+              </ResourceCardIcon>
             </div>
           )}
-          <Badge variant="secondary" className="absolute left-2.5 top-2.5 bg-background/70 text-[11px] backdrop-blur">
+          <Badge variant="secondary" className="absolute left-2.5 top-2.5 bg-background/80 text-[11px] backdrop-blur">
             {ASSET_CATEGORY_LABEL[asset.category]}
           </Badge>
-          <Badge className="absolute bottom-2.5 right-2.5 gap-1 bg-black/50 text-[11px] text-white">
+          <Badge className="absolute right-2.5 top-2.5 bg-black/50 text-[11px] text-white backdrop-blur-sm">
             {FILE_KIND_LABEL[asset.file.kind]}
           </Badge>
-        </div>
+        </ResourceCardCover>
       ) : (
-        <div className={`relative flex h-28 items-center justify-center bg-gradient-to-br ${asset.color}`}>
-          <div className="flex size-10 items-center justify-center rounded-xl bg-background/70 backdrop-blur">
-            {CATEGORY_ICON[asset.category]}
+        <ResourceCardCover className={asset.color}>
+          <div className="flex size-full items-center justify-center">
+            <ResourceCardIcon>{CATEGORY_ICON[asset.category]}</ResourceCardIcon>
           </div>
-          <Badge variant="secondary" className="absolute left-2.5 top-2.5 bg-background/70 text-[11px] backdrop-blur">
+          <Badge variant="secondary" className="absolute left-2.5 top-2.5 bg-background/80 text-[11px] backdrop-blur">
             {ASSET_CATEGORY_LABEL[asset.category]}
           </Badge>
-        </div>
+        </ResourceCardCover>
       )}
-      {/* 内容 */}
-      <div className="flex flex-1 flex-col gap-2 p-3.5">
+      <ResourceCardContent className="gap-2.5">
         <div className="flex items-start justify-between gap-2">
           <p className="text-sm font-semibold leading-tight">{asset.name}</p>
-          <div className="flex shrink-0 gap-0.5">
+          <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity duration-200 group-hover/resource:opacity-100 group-focus-within/resource:opacity-100">
             <Button variant="ghost" size="icon" className="size-7" onClick={onEdit} aria-label={`编辑 ${asset.name}`}>
               <PencilIcon className="size-3.5" />
             </Button>
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <Button variant="ghost" size="icon" className="size-7 text-red-500 hover:text-red-500" disabled={deleteDisabled} onClick={onDelete} aria-label={`删除 ${asset.name}`}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-destructive hover:text-destructive"
+                    disabled={deleteDisabled}
+                    onClick={onDelete}
+                    aria-label={`删除 ${asset.name}`}
+                  >
                     <Trash2Icon className="size-3.5" />
                   </Button>
                 }
@@ -407,23 +420,23 @@ function AssetCard({
             </Tooltip>
           </div>
         </div>
-        {asset.description && (
-          <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{asset.description}</p>
-        )}
-        <div className="mt-auto flex flex-wrap items-center gap-1 pt-1">
-          {asset.file && <span className="text-[11px] text-muted-foreground/60">{formatBytes(asset.file.size)}</span>}
+        <p className={cn("line-clamp-2 min-h-8 text-xs leading-relaxed text-muted-foreground", !asset.description && "text-muted-foreground/40")}>
+          {asset.description || "暂无描述"}
+        </p>
+        <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-0.5">
+          {asset.file && <span className="text-[11px] text-muted-foreground/70">{formatBytes(asset.file.size)}</span>}
           {asset.tags.slice(0, 3).map((t) => (
-            <span key={t} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{t}</span>
+            <span key={t} className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{t}</span>
           ))}
           {asset.tags.length > 3 && (
             <span className="text-[11px] text-muted-foreground/60">+{asset.tags.length - 3}</span>
           )}
-          <span className={`ml-auto text-[11px] ${usedBy > 0 ? "text-primary" : "text-muted-foreground/60"}`}>
-            {usedBy > 0 ? `引用于 ${usedBy} 个项目` : "未使用"}
+          <span className={cn("ml-auto text-[11px]", usedBy > 0 ? "font-medium text-primary" : "text-muted-foreground/60")}>
+            {usedBy > 0 ? `引用 ${usedBy}` : "未使用"}
           </span>
         </div>
-      </div>
-    </Card>
+      </ResourceCardContent>
+    </ResourceCard>
   )
 }
 
@@ -590,7 +603,7 @@ export function AssetLibrary() {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
-        <Select value={sort} onValueChange={(v) => setSort((v ?? "updated") as SortKey)}>
+        <Select value={sort} items={[...SORT_OPTIONS]} onValueChange={(v) => setSort((v ?? "updated") as SortKey)}>
           <SelectTrigger aria-label="排序" className="h-8 gap-1.5 text-xs">
             <ArrowUpDownIcon className="size-3.5 text-muted-foreground" />
             <SelectValue />

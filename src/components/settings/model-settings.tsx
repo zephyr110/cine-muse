@@ -70,6 +70,7 @@ export function ModelSettings() {
                   <Label>当前模型</Label>
                   <Select
                     value={m.selected}
+                    items={m.options.map((o) => ({ value: o.id, label: o.label }))}
                     onValueChange={(v) => dispatch({ type: "SELECT_MODEL", kind: m.id, modelId: v ?? m.selected, now: new Date().toISOString() })}
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>

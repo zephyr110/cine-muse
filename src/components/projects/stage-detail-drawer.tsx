@@ -1,41 +1,26 @@
 "use client"
 
 import * as React from "react"
-import {
-  CheckIcon,
-  FileTextIcon,
-  FilmIcon,
-  ImageIcon,
-  LayoutTemplateIcon,
-  LoaderCircleIcon,
-  MicIcon,
-  MonitorPlayIcon,
-  PaletteIcon,
-  PenLineIcon,
-  RotateCcwIcon,
-  SaveIcon,
-  ShieldCheckIcon,
-  XIcon,
-} from "lucide-react"
+import { LoaderCircleIcon, ShieldCheckIcon } from "lucide-react"
 
 import { PolarAngleAxis, RadialBar, RadialBarChart } from "recharts"
 
 import { GATE_MAX_RETRIES, GATE_PASS_SCORE } from "@/lib/engine/templates"
 import { useApp, useProject } from "@/lib/store"
 import type { ArtifactKind, WorkflowStage } from "@/lib/types"
+import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart"
 import { Button } from "@/components/ui/button"
 import { NoData } from "@/components/ui/no-data"
 import { Progress } from "@/components/ui/progress"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { STAGE_STATUS_META } from "@/components/projects/workflow-canvas"
 
 /** 基于 shadcn Chart（RadialBarChart）二次开发：质量分环形图 */
 function ScoreRing({ score }: { score: number }) {
-  // 语义色走主题变量（600 浅色 / 400 深色，与 status-* 约定一致，dark 自动适配）
   const scoreFill =
     score >= GATE_PASS_SCORE
       ? "[--score-fill:var(--color-emerald-600)] dark:[--score-fill:var(--color-emerald-400)]"
@@ -46,7 +31,7 @@ function ScoreRing({ score }: { score: number }) {
     score: { label: "质量分", color: "var(--score-fill)" },
   } satisfies ChartConfig
   return (
-    <div className={`relative size-24 shrink-0 ${scoreFill}`}>
+    <div className={cn("relative size-24 shrink-0", scoreFill)}>
       <ChartContainer config={chartConfig} className="size-full">
         <RadialBarChart
           data={[{ score }]}
@@ -70,15 +55,14 @@ function ScoreRing({ score }: { score: number }) {
   )
 }
 
-/** 产出物类型 → 图标（7 类全覆盖） */
-const KIND_ICON: Record<ArtifactKind, React.ReactNode> = {
-  script: <FileTextIcon className="size-4.5" />,
-  storyboard: <LayoutTemplateIcon className="size-4.5" />,
-  style_guide: <PaletteIcon className="size-4.5" />,
-  scene: <ImageIcon className="size-4.5" />,
-  video: <FilmIcon className="size-4.5" />,
-  voiceover: <MicIcon className="size-4.5" />,
-  final_cut: <MonitorPlayIcon className="size-4.5" />,
+const KIND_LABEL: Record<ArtifactKind, string> = {
+  script: "剧本",
+  storyboard: "分镜",
+  style_guide: "风格指南",
+  scene: "场景图",
+  video: "视频",
+  voiceover: "配音",
+  final_cut: "成片",
 }
 
 /** 分数 → 语义色（门禁通过线 75 / 及格线 60） */
@@ -90,12 +74,11 @@ function metricColor(score: number): string {
       : "text-danger"
 }
 
-/** 产出元数据统计卡（shadcn stat 样式） */
 function StatCell({ value, unit }: { value: number; unit: string }) {
   return (
-    <div className="rounded-lg border bg-muted/30 px-3 py-2 text-center">
-      <div className="text-base font-semibold tabular-nums">{value}</div>
-      <div className="text-xs text-muted-foreground">{unit}</div>
+    <div className="flex flex-col items-center gap-0.5 rounded-lg border bg-muted/30 px-3 py-2">
+      <span className="text-base font-semibold tabular-nums">{value}</span>
+      <span className="text-xs text-muted-foreground">{unit}</span>
     </div>
   )
 }
@@ -116,7 +99,6 @@ function ArtifactPanel({ projectId, stage }: { projectId: string; stage: Workflo
     )
   }
 
-  // L3 手作式：产出允许手动改写（终态/确认态）
   const editable =
     project?.interventionMode === "manual" &&
     !!a.content &&
@@ -132,19 +114,23 @@ function ArtifactPanel({ projectId, stage }: { projectId: string; stage: Workflo
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-start gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-          {KIND_ICON[a.kind]}
-        </div>
-        <div className="min-w-0 flex-1 space-y-1">
-          <p className="text-sm font-medium">{a.title}</p>
-          <p className="text-xs text-muted-foreground">{a.summary}</p>
-          {editable && (
-            <Badge variant="outline" className="gap-1 status-creative text-xs">
-              <PenLineIcon className="size-3" /> 手作式可编辑
+    <div className="flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary" className="text-[11px] font-normal">
+              {KIND_LABEL[a.kind]}
             </Badge>
-          )}
+            {editable && (
+              <Badge variant="outline" className="status-creative text-xs">
+                手作式可编辑
+              </Badge>
+            )}
+          </div>
+          <div className="flex flex-col gap-1">
+            <p className="text-sm font-medium leading-snug">{a.title}</p>
+            <p className="text-xs text-muted-foreground">{a.summary}</p>
+          </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {typeof a.words === "number" && <StatCell value={a.words} unit="字" />}
             {typeof a.shots === "number" && <StatCell value={a.shots} unit="镜" />}
@@ -153,14 +139,14 @@ function ArtifactPanel({ projectId, stage }: { projectId: string; stage: Workflo
           </div>
         </div>
         {editable && !editing && (
-          <Button variant="outline" size="sm" className="gap-1 shrink-0" onClick={startEdit}>
-            <PenLineIcon className="size-3.5" /> 编辑产出
+          <Button variant="outline" size="sm" className="shrink-0" onClick={startEdit}>
+            编辑
           </Button>
         )}
       </div>
 
       {editing ? (
-        <div className="space-y-2">
+        <div className="flex flex-col gap-2">
           <Textarea
             autoFocus
             rows={10}
@@ -169,9 +155,11 @@ function ArtifactPanel({ projectId, stage }: { projectId: string; stage: Workflo
             onChange={(e) => setDraft(e.target.value)}
           />
           <div className="flex justify-end gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>取消</Button>
-            <Button size="sm" className="gap-1" onClick={save}>
-              <SaveIcon className="size-3.5" /> 保存修订
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+              取消
+            </Button>
+            <Button size="sm" onClick={save}>
+              保存修订
             </Button>
           </div>
         </div>
@@ -199,27 +187,28 @@ function AssessmentPanel({ stage }: { stage: WorkflowStage }) {
   return (
     <div className="flex items-start gap-4">
       <ScoreRing score={a.score} />
-      <div className="min-w-0 flex-1 space-y-4">
+      <div className="flex min-w-0 flex-1 flex-col gap-4">
         <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
           {a.metrics.map((m) => (
-            <div key={m.key} className="space-y-1.5">
+            <div key={m.key} className="flex flex-col gap-1.5">
               <div className="flex items-baseline justify-between gap-2 text-xs">
                 <span className="truncate text-muted-foreground">{m.label}</span>
-                <span className={`shrink-0 font-semibold tabular-nums ${metricColor(m.value)}`}>{m.value}</span>
+                <span className={cn("shrink-0 font-semibold tabular-nums", metricColor(m.value))}>{m.value}</span>
               </div>
               <Progress value={m.value} className="h-1.5" />
             </div>
           ))}
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-medium">置信度 {a.confidence}%</span>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span>置信度 {a.confidence}%</span>
           {a.reviewer && (
-            <Badge variant="outline" className="gap-1 text-xs">
-              <ShieldCheckIcon className="size-3" /> 审查：{a.reviewer}
-            </Badge>
+            <>
+              <span aria-hidden className="text-border">·</span>
+              <span>审查 {a.reviewer}</span>
+            </>
           )}
         </div>
-        <p className="rounded-lg border-l-2 border-primary/50 bg-muted/30 p-3 text-xs leading-relaxed">{a.feedback}</p>
+        <p className="rounded-lg bg-muted/30 p-3 text-xs leading-relaxed text-foreground/90">{a.feedback}</p>
       </div>
     </div>
   )
@@ -230,18 +219,18 @@ function ReviewsPanel({ stage }: { stage: WorkflowStage }) {
     return <NoData />
   }
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-3">
       {stage.reviews.map((r, i) => (
-        <div key={i} className="flex items-start gap-3 rounded-lg border bg-card/50 p-3">
-          <Badge variant={r.from === "human" ? "default" : "secondary"} className="mt-0.5 shrink-0 px-2 text-xs">
-            {r.from === "human" ? "人工" : "引擎"}
-          </Badge>
-          <div className="min-w-0 flex-1 space-y-1">
-            <p className="text-xs leading-relaxed">{r.text}</p>
-            <p className="text-xs text-muted-foreground">
+        <div key={i} className="flex flex-col gap-2 rounded-lg border bg-card/50 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <Badge variant={r.from === "human" ? "default" : "secondary"} className="text-xs">
+              {r.from === "human" ? "人工" : "引擎"}
+            </Badge>
+            <time className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
               {new Date(r.at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-            </p>
+            </time>
           </div>
+          <p className="text-xs leading-relaxed">{r.text}</p>
         </div>
       ))}
     </div>
@@ -253,34 +242,33 @@ function IterationsPanel({ stage }: { stage: WorkflowStage }) {
     return <NoData />
   }
   return (
-    <>
+    <div className="flex flex-col gap-4">
       <p className="text-xs text-muted-foreground">
         共 {stage.iterations.length} 轮迭代
         {stage.status === "iterating" && <> · 当前第 {stage.iterations.length + 1} 轮进行中</>}
       </p>
-      <ol className="relative space-y-4 border-l pl-6">
+      <ol className="relative flex flex-col gap-4 border-l border-border pl-6">
         {[...stage.iterations].reverse().map((it) => (
           <li key={it.round} className="relative">
-            <span className="absolute top-0 -left-[31px] flex size-5 items-center justify-center rounded-full border bg-card text-xs font-semibold tabular-nums shadow-sm">
+            <span className="absolute top-0 -left-[31px] flex size-5 items-center justify-center rounded-full border bg-card text-[11px] font-semibold tabular-nums shadow-sm">
               {it.round}
             </span>
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-baseline justify-between gap-2">
               <span className="text-xs font-medium">第 {it.round} 轮 · 引擎重写</span>
-              <span className={`flex items-center gap-1.5 text-xs tabular-nums ${metricColor(it.assessment.score)}`}>
-                {it.reason && <RotateCcwIcon className="size-3" />}
+              <span className={cn("shrink-0 text-xs tabular-nums", metricColor(it.assessment.score))}>
                 <span className="font-bold">{it.assessment.score}</span> 分
               </span>
             </div>
             {it.reason && (
-              <p className="mt-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-xs leading-relaxed text-amber-600 dark:text-amber-400">
+              <p className="mt-1.5 rounded-md bg-amber-500/10 px-2.5 py-1.5 text-xs leading-relaxed text-warn">
                 打回原因：{it.reason}
               </p>
             )}
-            <p className="mt-1.5 text-xs text-muted-foreground">{it.assessment.feedback}</p>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{it.assessment.feedback}</p>
           </li>
         ))}
       </ol>
-    </>
+    </div>
   )
 }
 
@@ -305,34 +293,33 @@ function ApprovalActions({ projectId, stage }: { projectId: string; stage: Workf
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-4">
-        {a && (
-          <>
-            <span className={`text-3xl leading-none font-bold tabular-nums ${scoreColor}`}>{a.score}</span>
-            <span className="shrink-0 text-xs leading-tight text-muted-foreground">
+    <div className="flex flex-col gap-3">
+      {a && (
+        <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+          <div className="flex items-baseline gap-2">
+            <span className={cn("text-3xl font-bold tabular-nums leading-none", scoreColor)}>{a.score}</span>
+            <span className="text-xs leading-tight text-muted-foreground">
               质量分
               <br />
               置信度 {a.confidence}%
             </span>
-          </>
-        )}
-        {a && (
-          <p className="min-w-0 flex-1 truncate border-l border-border/60 pl-4 text-xs text-muted-foreground">
+          </div>
+          <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground sm:border-l sm:border-border/60 sm:pl-4">
             {a.feedback}
           </p>
-        )}
-        <div className="ml-auto flex shrink-0 items-center gap-2">
-          <Button size="sm" variant="destructive" className="gap-1" onClick={() => setRejecting(true)}>
-            <XIcon /> 打回重写
+        </div>
+      )}
+      {!rejecting ? (
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant="outline" onClick={() => setRejecting(true)}>
+            打回重写
           </Button>
-          <Button size="sm" className="gap-1" onClick={approve}>
-            <CheckIcon /> 批准，进入下一环节
+          <Button size="sm" onClick={approve}>
+            批准，进入下一环节
           </Button>
         </div>
-      </div>
-      {rejecting && (
-        <div className="space-y-2">
+      ) : (
+        <div className="flex flex-col gap-2">
           <Textarea
             autoFocus
             placeholder="说明打回原因（将作为下一轮迭代的修改指令）"
@@ -341,9 +328,11 @@ function ApprovalActions({ projectId, stage }: { projectId: string; stage: Workf
             onChange={(e) => setReason(e.target.value)}
           />
           <div className="flex justify-end gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setRejecting(false)}>取消</Button>
+            <Button size="sm" variant="ghost" onClick={() => setRejecting(false)}>
+              取消
+            </Button>
             <Button size="sm" variant="destructive" disabled={reason.trim().length < 2} onClick={reject}>
-              <RotateCcwIcon /> 确认打回重写
+              确认打回
             </Button>
           </div>
         </div>
@@ -353,36 +342,42 @@ function ApprovalActions({ projectId, stage }: { projectId: string; stage: Workf
 }
 
 function StageTabs({ projectId, stage }: { projectId: string; stage: WorkflowStage }) {
-  // 每个环节（key=stage.id）独立挂载；默认落在"产出物"——质量分与审批操作
-  // 由底部吸底审批栏常驻展示，无需切 tab 即可获得完整决策上下文
   const [tab, setTab] = React.useState("artifact")
 
   return (
-    <>
-      <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="artifact" className="text-xs">产出物</TabsTrigger>
-          <TabsTrigger value="assessment" className="text-xs">质量评估</TabsTrigger>
-          <TabsTrigger value="review" className="text-xs">审查反馈</TabsTrigger>
-          <TabsTrigger value="iterations" className="text-xs">
-            迭代
-            {stage.iterations.length > 1 && <Badge variant="secondary" className="ml-1 px-1.5 text-xs">{stage.iterations.length}</Badge>}
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="artifact" className="flex flex-1 flex-col pt-4">
-          <ArtifactPanel projectId={projectId} stage={stage} />
-        </TabsContent>
-        <TabsContent value="assessment" className="flex flex-1 flex-col pt-4">
-          <AssessmentPanel stage={stage} />
-        </TabsContent>
-        <TabsContent value="review" className="flex flex-1 flex-col pt-4">
-          <ReviewsPanel stage={stage} />
-        </TabsContent>
-        <TabsContent value="iterations" className="flex flex-1 flex-col pt-4">
-          <IterationsPanel stage={stage} />
-        </TabsContent>
-      </Tabs>
-    </>
+    <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col">
+      <TabsList className="grid w-full grid-cols-4">
+        <TabsTrigger value="artifact" className="text-xs">
+          产出物
+        </TabsTrigger>
+        <TabsTrigger value="assessment" className="text-xs">
+          质量评估
+        </TabsTrigger>
+        <TabsTrigger value="review" className="text-xs">
+          审查反馈
+        </TabsTrigger>
+        <TabsTrigger value="iterations" className="text-xs">
+          迭代
+          {stage.iterations.length > 0 && (
+            <Badge variant="secondary" className="ml-1 px-1.5 text-[11px] tabular-nums">
+              {stage.iterations.length}
+            </Badge>
+          )}
+        </TabsTrigger>
+      </TabsList>
+      <TabsContent value="artifact" className="flex flex-1 flex-col pt-4">
+        <ArtifactPanel projectId={projectId} stage={stage} />
+      </TabsContent>
+      <TabsContent value="assessment" className="flex flex-1 flex-col pt-4">
+        <AssessmentPanel stage={stage} />
+      </TabsContent>
+      <TabsContent value="review" className="flex flex-1 flex-col pt-4">
+        <ReviewsPanel stage={stage} />
+      </TabsContent>
+      <TabsContent value="iterations" className="flex flex-1 flex-col pt-4">
+        <IterationsPanel stage={stage} />
+      </TabsContent>
+    </Tabs>
   )
 }
 
@@ -397,12 +392,10 @@ export function StageDetailDrawer({
 }) {
   const project = useProject(projectId)
   const scrollRef = React.useRef<HTMLDivElement | null>(null)
-  // 实时节点：面板展示引擎最新状态（打开后 tick 仍在推进），而非打开瞬间的快照
   const liveStage = stage && project
     ? (project.stages.find((s) => s.id === stage.id) ?? stage)
     : null
 
-  // 切换节点时重置抽屉滚动位置，避免停留在上一节点的长内容深处
   React.useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 })
   }, [liveStage?.id])
@@ -411,46 +404,49 @@ export function StageDetailDrawer({
 
   const meta = STAGE_STATUS_META[liveStage.status]
   const stepIndex = project.stages.findIndex((s) => s.id === liveStage.id)
+  const showProgress = ["running", "iterating", "waiting_approval"].includes(liveStage.status)
 
   return (
     <Sheet open={!!stage} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent ref={scrollRef} side="right" className="w-full overflow-y-auto data-[side=right]:sm:max-w-3xl">
-        {/* 头部吸顶：滚动长内容时保持节点身份与状态可见（pr 预留关闭按钮空间） */}
-        <SheetHeader className="sticky top-0 z-10 border-b border-border/40 bg-popover/95 px-6 pt-4 pb-3 pr-12 backdrop-blur-sm">
+      <SheetContent ref={scrollRef} side="right" className="w-full gap-0 overflow-y-auto p-0 data-[side=right]:sm:max-w-3xl">
+        <SheetHeader className="sticky top-0 z-10 gap-2 border-b border-border/40 bg-popover/95 px-6 pt-4 pb-3 pr-12 backdrop-blur-sm">
           <div className="flex items-center gap-2">
-            <div className={`flex size-8 shrink-0 items-center justify-center rounded-lg border ${meta.ring}`}>
+            <div className={cn("flex size-8 shrink-0 items-center justify-center rounded-lg border", meta.ring)}>
               {meta.icon}
             </div>
             <SheetTitle className="truncate text-lg tracking-tight">{liveStage.title}</SheetTitle>
             {stepIndex >= 0 && (
               <Badge variant="secondary" className="shrink-0 px-2 text-xs tabular-nums">
-                {stepIndex + 1}/{project.stages.length} 步
+                {stepIndex + 1}/{project.stages.length}
               </Badge>
             )}
-            <Badge variant="outline" className="ml-auto shrink-0">{meta.label}</Badge>
+            <Badge variant="outline" className="ml-auto shrink-0">
+              {meta.label}
+            </Badge>
           </div>
-          <p className="text-xs text-muted-foreground">{liveStage.description}</p>
+          <SheetDescription className="text-xs">{liveStage.description}</SheetDescription>
           {liveStage.gate && (
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <ShieldCheckIcon className="size-3 text-emerald-500" />
-              质量门禁：{liveStage.gateAgentName} 审查（通过线 {GATE_PASS_SCORE} 分，已打回 {liveStage.gateRetries}/{GATE_MAX_RETRIES}）
+            <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+              <ShieldCheckIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              <span>
+                质量门禁：{liveStage.gateAgentName} 审查（通过线 {GATE_PASS_SCORE} 分，已打回 {liveStage.gateRetries}/{GATE_MAX_RETRIES}）
+              </span>
             </p>
           )}
-          {["running", "iterating", "waiting_approval"].includes(liveStage.status) && (
-            <div className="flex items-center gap-2">
+          {showProgress && (
+            <div className="flex items-center gap-2 pt-0.5">
               <Progress value={liveStage.progress} className="h-1 flex-1" />
-              <span className="text-xs tabular-nums text-muted-foreground">{liveStage.progress}%</span>
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{liveStage.progress}%</span>
             </div>
           )}
         </SheetHeader>
 
-        <div className="flex flex-1 flex-col px-6 pb-8">
+        <div className="flex flex-1 flex-col px-6 py-5">
           <StageTabs key={liveStage.id} projectId={projectId} stage={liveStage} />
         </div>
 
-        {/* 审批操作栏吸底：待确认时无需滚动即可完成批准/打回（附质量分摘要） */}
         {liveStage.status === "waiting_approval" && liveStage.isCheckpoint && (
-          <div className="sticky bottom-0 z-10 animate-in border-t border-border/60 bg-popover/95 px-6 pt-3 pb-3 backdrop-blur-sm fade-in-0 slide-in-from-bottom-2 duration-300">
+          <div className="sticky bottom-0 z-10 animate-in border-t border-border/60 bg-popover/95 px-6 py-3 backdrop-blur-sm fade-in-0 slide-in-from-bottom-2 duration-300">
             <ApprovalActions projectId={projectId} stage={liveStage} />
           </div>
         )}
