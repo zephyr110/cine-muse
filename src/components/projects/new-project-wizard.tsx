@@ -150,7 +150,8 @@ export function NewProjectWizard() {
     template: "full" as WorkflowTemplate,
     interventionMode: "guided" as InterventionMode,
     assetIds: [] as string[],
-    boostAgentIds: [] as string[],
+    // full 模板默认开启空间预演台（可取消）；quick 模板不注入
+    boostAgentIds: ["previs"],
   })
 
   const canNext =
@@ -347,7 +348,17 @@ export function NewProjectWizard() {
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setForm({ ...form, template: t.id })}
+                  onClick={() =>
+                    setForm({
+                      ...form,
+                      template: t.id,
+                      // 模板切换时同步 previs 增强项：full 默认勾选（Set 去重），quick 移除
+                      boostAgentIds:
+                        t.id === "full"
+                          ? [...new Set([...form.boostAgentIds, "previs"])]
+                          : form.boostAgentIds.filter((id) => id !== "previs"),
+                    })
+                  }
                   className={`relative flex flex-col gap-3 rounded-lg border p-4 text-left transition-colors ${
                     form.template === t.id
                       ? "border-primary ring-2 ring-primary/30"
