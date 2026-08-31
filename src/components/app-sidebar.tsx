@@ -176,7 +176,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             {/* 主题切换：三段式分段控件（浅色 | 系统 | 深色） */}
             <div className="flex flex-col gap-3 px-0.5">
               <div className="flex flex-col gap-1.5">
-                <p className="px-1.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                <p className="px-1.5 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
                   主题
                 </p>
                 <div className="inline-flex w-full rounded-lg bg-muted/50 p-1">
