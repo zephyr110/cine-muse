@@ -479,7 +479,7 @@ export function StageDetailDrawer({
 
         {/* 审批操作栏吸底：待确认时无需滚动即可完成批准/打回（附质量分摘要） */}
         {liveStage.status === "waiting_approval" && liveStage.isCheckpoint && (
-          <div className="sticky bottom-0 z-10 animate-in border-t border-border/60 bg-popover/95 px-6 pt-3 pb-3 shadow-[0_-8px_16px_-12px_rgba(0,0,0,0.35)] backdrop-blur-sm fade-in-0 slide-in-from-bottom-2 duration-300">
+          <div className="sticky bottom-0 z-10 animate-in border-t border-border/60 bg-popover/95 px-6 pt-3 pb-3 backdrop-blur-sm fade-in-0 slide-in-from-bottom-2 duration-300">
             <ApprovalActions projectId={projectId} stage={liveStage} />
           </div>
         )}
