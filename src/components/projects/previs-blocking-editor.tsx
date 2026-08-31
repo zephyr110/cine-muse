@@ -1,55 +1,98 @@
 "use client"
 
 import * as React from "react"
-import { RotateCcwIcon } from "lucide-react"
+import { CameraIcon, RotateCcwIcon } from "lucide-react"
 
 import { useApp } from "@/lib/store"
-import { renderPrevisShot } from "@/lib/engine/previs-render"
+import { injectMarkerIds, renderPrevisShot } from "@/lib/engine/previs-render"
 import { isPrevisArtifact } from "@/lib/engine/previs-types"
-import type { BlockingItem, WorkflowStage } from "@/lib/types"
+import type { BlockingItem, PrevisShot, WorkflowStage } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
-/** 与 previs-render 俯视投影保持一致：480×270 画布、48px/世界单位（z 向上） */
+/** 与 previs-render 俯视投影一致：480×270 画布、48px/世界单位（z 向上） */
 const SVG_W = 480
 const SVG_H = 270
 const PX_PER_UNIT = 48
 
-const round2 = (v: number) => Math.round(v * 100) / 100
+/** 可编辑范围：布景项与拖拽的"画布内钳制"一致；机位允许离画布更远 */
+const X_RANGE = { min: -SVG_W / 2 / PX_PER_UNIT, max: SVG_W / 2 / PX_PER_UNIT } // [-5, 5]
+const Z_RANGE = { min: 1 - SVG_H / 2 / PX_PER_UNIT, max: 1 + SVG_H / 2 / PX_PER_UNIT } // [-1.8125, 3.8125]
+const CAM_RANGE = { min: -20, max: 20 }
+const FOV_RANGE = { min: 5, max: 150 }
 
-/** 给俯视图的角色/道具标记注入 data-bid（对应 blocking id），供命中检测与选中高亮 */
-function withMarkerIds(svg: string, items: BlockingItem[]): string {
-  const draggable = items.filter((b) => b.kind !== "terrain")
-  let i = 0
-  const re = /<g data-kind="character">|<rect data-kind="prop"/g
-  return svg.replace(re, (m) =>
-    i < draggable.length ? m.replace("data-kind", `data-bid="${draggable[i++].id}" data-kind`) : m,
+const round2 = (v: number) => Math.round(v * 100) / 100
+const clamp = (v: number, r: { min: number; max: number }) => Math.min(r.max, Math.max(r.min, v))
+
+/**
+ * 数值输入（带字符串缓冲）：空输入不提交（避免 Number("")===0 钉到 0），
+ * 非法输入失焦后回显原值；提交值由父级按范围钳制。
+ */
+function NumField({
+  value, step, onCommit, ariaLabel,
+}: {
+  value: number
+  step: number
+  onCommit: (v: number) => void
+  ariaLabel?: string
+}) {
+  const [text, setText] = React.useState(String(value))
+  const [focused, setFocused] = React.useState(false)
+  const [lastValue, setLastValue] = React.useState(value)
+  // 外部值变化且未在编辑中 → 同步缓冲（渲染期派生状态，React 官方模式）
+  if (!focused && value !== lastValue) {
+    setLastValue(value)
+    setText(String(value))
+  }
+
+  return (
+    <input
+      type="number"
+      step={step}
+      value={focused ? text : String(value)}
+      aria-label={ariaLabel}
+      onFocus={() => {
+        setFocused(true)
+        setText(String(value))
+      }}
+      onChange={(e) => {
+        setText(e.target.value)
+        if (e.target.value === "") return
+        const n = Number(e.target.value)
+        if (Number.isFinite(n)) onCommit(n)
+      }}
+      onBlur={() => {
+        setFocused(false)
+        const n = Number(text)
+        if (text === "" || !Number.isFinite(n)) return // 无效 → 派生状态回显原值
+        onCommit(n)
+      }}
+      className="h-6 w-14 rounded border bg-background px-1 text-center text-xs tabular-nums"
+    />
   )
 }
 
-/**
- * 2D 布景干预：拖拽角色/道具标记 + 选中后方向键微调 + 精确坐标输入 + 重新渲染
- * （manual 干预模式专用；地形与机位视为固定，机位参数仅展示）
- */
-export function PrevisBlockingEditor({
-  projectId, stage, shotIndex, onDone,
+/** 单镜头编辑：拖拽/选中微调/坐标输入 + 机位参数 + 重新渲染 */
+function BlockingShotEditor({
+  projectId, stage, shotIndex, shot, onDone,
 }: {
   projectId: string
   stage: WorkflowStage
   shotIndex: number
+  shot: PrevisShot
   onDone: () => void
 }) {
   const { dispatch } = useApp()
-  const artifact = stage.artifact
-  const shot = artifact && isPrevisArtifact(artifact) ? artifact.shots[shotIndex] : undefined
-  const [items, setItems] = React.useState<BlockingItem[]>(shot?.blocking ?? [])
+  const [items, setItems] = React.useState<BlockingItem[]>(shot.blocking)
+  const [camera, setCamera] = React.useState<PrevisShot["camera"]>(shot.camera)
   const [selected, setSelected] = React.useState<string | null>(null)
   const [dragId, setDragId] = React.useState<string | null>(null)
   const svgBoxRef = React.useRef<HTMLDivElement | null>(null)
 
-  const previewSvg = shot
-    ? withMarkerIds(renderPrevisShot({ ...shot, blocking: items }).previewSvg, items)
-    : ""
+  const previewSvg = injectMarkerIds(
+    renderPrevisShot({ ...shot, blocking: items, camera }).previewSvg,
+    items,
+  )
 
   // 选中标记高亮（每次重新注入 SVG 后同步一次；data-selected 由 style 标签描边）
   React.useEffect(() => {
@@ -60,8 +103,6 @@ export function PrevisBlockingEditor({
       else el.removeAttribute("data-selected")
     }
   }, [previewSvg, selected])
-
-  if (!shot) return null
 
   const draggable = items.filter((b) => b.kind !== "terrain")
 
@@ -98,13 +139,32 @@ export function PrevisBlockingEditor({
 
   const setPosition = (id: string, axis: 0 | 2, value: number) => {
     if (!Number.isFinite(value)) return
+    const range = axis === 0 ? X_RANGE : Z_RANGE
     setItems((prev) =>
       prev.map((b) =>
         b.id === id
-          ? { ...b, position: axis === 0 ? [round2(value), 0, b.position[2]] : [b.position[0], 0, round2(value)] }
+          ? {
+              ...b,
+              position:
+                axis === 0
+                  ? [round2(clamp(value, range)), 0, b.position[2]]
+                  : [b.position[0], 0, round2(clamp(value, range))],
+            }
           : b,
       ),
     )
+  }
+
+  const setCameraAxis = (axis: "position" | "target", idx: 0 | 1 | 2, value: number) => {
+    if (!Number.isFinite(value)) return
+    const next: [number, number, number] = [...camera[axis]] as [number, number, number]
+    next[idx] = round2(clamp(value, CAM_RANGE))
+    setCamera(axis === "position" ? { ...camera, position: next } : { ...camera, target: next })
+  }
+
+  const setCameraFov = (value: number) => {
+    if (!Number.isFinite(value)) return
+    setCamera({ ...camera, fov: round2(clamp(value, FOV_RANGE)) })
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -121,19 +181,29 @@ export function PrevisBlockingEditor({
     e.preventDefault()
     setItems((prev) =>
       prev.map((b) =>
-        b.id === selected ? { ...b, position: [round2(b.position[0] + d[0]), 0, round2(b.position[2] + d[1])] } : b,
+        b.id === selected
+          ? {
+              ...b,
+              position: [
+                round2(clamp(b.position[0] + d[0], X_RANGE)),
+                0,
+                round2(clamp(b.position[2] + d[1], Z_RANGE)),
+              ],
+            }
+          : b,
       ),
     )
   }
 
   const rerender = () => {
     dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: items })
+    dispatch({ type: "UPDATE_PREVIS_CAMERA", projectId, stageId: stage.id, shotIndex, camera })
     dispatch({ type: "RERENDER_PREVIS", projectId, stageId: stage.id })
     onDone()
   }
 
   return (
-    <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+    <div className="space-y-3">
       <style>{`[data-bid]{cursor:grab}[data-bid][data-selected]{stroke:#dc2626;stroke-width:3}`}</style>
       <div
         ref={svgBoxRef}
@@ -167,30 +237,50 @@ export function PrevisBlockingEditor({
               </span>
               <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
                 X
-                <input
-                  type="number"
-                  step={0.5}
+                <NumField
                   value={b.position[0]}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => setPosition(b.id, 0, Number(e.target.value))}
-                  className="h-6 w-14 rounded border bg-background px-1 text-center text-xs tabular-nums"
+                  step={0.5}
+                  onCommit={(v) => setPosition(b.id, 0, v)}
+                  ariaLabel={`${b.name} X 坐标`}
                 />
               </label>
               <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
                 Z
-                <input
-                  type="number"
-                  step={0.5}
+                <NumField
                   value={b.position[2]}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => setPosition(b.id, 2, Number(e.target.value))}
-                  className="h-6 w-14 rounded border bg-background px-1 text-center text-xs tabular-nums"
+                  step={0.5}
+                  onCommit={(v) => setPosition(b.id, 2, v)}
+                  ariaLabel={`${b.name} Z 坐标`}
                 />
               </label>
             </div>
           ))}
         </div>
       )}
+      <div className="rounded-md border border-border/60 p-2">
+        <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+          <CameraIcon className="size-3" /> 机位参数（视锥随目标实时变化）
+        </p>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-7">
+          {(["position", "target"] as const).map((axis) =>
+            (["x", "y", "z"] as const).map((letter, idx) => (
+              <label key={`${axis}-${letter}`} className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                {axis === "position" ? "机位" : "目标"} {letter.toUpperCase()}
+                <NumField
+                  value={camera[axis][idx as 0 | 1 | 2]}
+                  step={0.5}
+                  onCommit={(v) => setCameraAxis(axis, idx as 0 | 1 | 2, v)}
+                  ariaLabel={`${axis === "position" ? "机位" : "目标"} ${letter.toUpperCase()}`}
+                />
+              </label>
+            )),
+          )}
+          <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+            FOV（度）
+            <NumField value={camera.fov} step={5} onCommit={setCameraFov} ariaLabel="视野角度 FOV" />
+          </label>
+        </div>
+      </div>
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={onDone}>
           取消
@@ -199,6 +289,52 @@ export function PrevisBlockingEditor({
           <RotateCcwIcon className="size-3.5" /> 重新渲染
         </Button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * 2D 布景干预（manual 模式专用）：镜头选择 + 布景拖拽/微调 + 机位参数 + 重新渲染。
+ * 每镜编辑状态由 key 隔离，切换镜头自动重置。
+ */
+export function PrevisBlockingEditor({
+  projectId, stage, shotIndex, onShotIndexChange, onDone,
+}: {
+  projectId: string
+  stage: WorkflowStage
+  shotIndex: number
+  onShotIndexChange: (index: number) => void
+  onDone: () => void
+}) {
+  const artifact = stage.artifact
+  if (!isPrevisArtifact(artifact)) return null
+  const shots = artifact.shots
+  if (shots.length === 0) return null
+  const index = Math.min(Math.max(shotIndex, 0), shots.length - 1)
+  const shot = shots[index]
+
+  return (
+    <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+      {shots.length > 1 && (
+        <div className="flex flex-wrap gap-1.5">
+          {shots.map((s, i) => (
+            <button
+              key={s.shotIndex}
+              type="button"
+              onClick={() => onShotIndexChange(i)}
+              className={cn(
+                "rounded-md border px-2 py-1 text-xs transition-colors",
+                i === index
+                  ? "border-primary/60 bg-primary/10 font-medium"
+                  : "border-border/60 text-muted-foreground hover:border-primary/30",
+              )}
+            >
+              镜头 {s.shotIndex + 1}
+            </button>
+          ))}
+        </div>
+      )}
+      <BlockingShotEditor key={index} projectId={projectId} stage={stage} shotIndex={index} shot={shot} onDone={onDone} />
     </div>
   )
 }

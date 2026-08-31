@@ -481,6 +481,17 @@ export function engineReducer(state: AppState, action: Action): AppState {
         Object.assign(shot, renderPrevisShot(shot))
       })
 
+    case "UPDATE_PREVIS_CAMERA":
+      return produce(state, (draft) => {
+        const p = draft.projects.find((x) => x.id === action.projectId)
+        const s = p?.stages.find((x) => x.id === action.stageId)
+        if (!p || !s || !isPrevisArtifact(s.artifact)) return
+        const shot = s.artifact.shots[action.shotIndex]
+        if (!shot) return
+        shot.camera = action.camera
+        Object.assign(shot, renderPrevisShot(shot))
+      })
+
     case "RERENDER_PREVIS":
       return produce(state, (draft) => {
         const p = draft.projects.find((x) => x.id === action.projectId)

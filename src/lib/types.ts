@@ -323,6 +323,13 @@ export type Action =
     }
   | { type: "UPDATE_ASSET"; assetId: string; patch: Partial<Asset>; now: string }
   | { type: "UPDATE_PREVIS_BLOCKING"; projectId: string; stageId: string; shotIndex: number; blocking: BlockingItem[] }
+  | {
+      type: "UPDATE_PREVIS_CAMERA"
+      projectId: string
+      stageId: string
+      shotIndex: number
+      camera: PrevisShot["camera"]
+    }
   | { type: "RERENDER_PREVIS"; projectId: string; stageId: string }
   | { type: "DELETE_ASSET"; assetId: string; now: string }
   | {

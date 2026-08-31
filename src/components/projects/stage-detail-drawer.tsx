@@ -92,16 +92,23 @@ function PrevisPanel({ projectId, stage, artifact }: { projectId: string; stage:
   const { state } = useApp()
   const project = state.projects.find((p) => p.id === projectId)
   const [editing, setEditing] = React.useState(false)
+  const [shotIndex, setShotIndex] = React.useState(0)
 
   return (
     <div className="space-y-4">
-      {project?.interventionMode === "manual" && !editing && (
+      {project?.interventionMode === "manual" && stage.status === "waiting_approval" && !editing && (
         <Button size="sm" variant="outline" className="gap-1" onClick={() => setEditing(true)}>
           <PenLineIcon className="size-3.5" /> 调整摆位与机位
         </Button>
       )}
       {editing ? (
-        <PrevisBlockingEditor projectId={projectId} stage={stage} shotIndex={0} onDone={() => setEditing(false)} />
+        <PrevisBlockingEditor
+          projectId={projectId}
+          stage={stage}
+          shotIndex={shotIndex}
+          onShotIndexChange={setShotIndex}
+          onDone={() => setEditing(false)}
+        />
       ) : (
         artifact.shots.map((shot) => (
         <div key={shot.shotIndex} className="space-y-2 rounded-lg border bg-muted/30 p-3">
