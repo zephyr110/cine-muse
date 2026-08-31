@@ -31,6 +31,9 @@ process.on("unhandledRejection", (reason) => {
 
 const DEV_URL = process.env.CINE_DEV_URL
 
+// 窗口/任务栏图标：与 web 端共用同一 logo（打包后位于 out/，开发环境可能尚未构建）
+const WINDOW_ICON = path.join(__dirname, "..", "out", "cine-muse-logo.png")
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1440,
@@ -39,6 +42,7 @@ function createWindow(): void {
     minHeight: 700,
     title: "Cine Muse",
     backgroundColor: "#0a0a0a",
+    icon: fs.existsSync(WINDOW_ICON) ? WINDOW_ICON : undefined,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

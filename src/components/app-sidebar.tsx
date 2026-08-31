@@ -6,7 +6,6 @@ import { usePathname, useRouter } from "next/navigation"
 import {
   BotIcon,
   CirclePlusIcon,
-  ClapperboardIcon,
   LayoutDashboardIcon,
   FolderOpenIcon,
   LogOutIcon,
@@ -14,6 +13,8 @@ import {
   Settings2Icon,
   SunIcon,
 } from "lucide-react"
+
+import brandLogo from "@/app/icon.png"
 
 import { useApp } from "@/lib/store"
 import { logout } from "@/lib/auth"
@@ -76,9 +77,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" className="data-[slot=sidebar-menu-button]:p-1.5!" render={<Link href="/dashboard" />}>
-              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <ClapperboardIcon className="size-5" />
-              </div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={brandLogo.src} alt="Cine Muse" className="size-8 shrink-0" />
               <div className="grid flex-1 text-left leading-tight">
                 <span className="text-base font-semibold">Cine Muse</span>
                 <span className="truncate text-xs text-muted-foreground">AI 视频生产工作台</span>
