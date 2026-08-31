@@ -388,7 +388,7 @@ function StageTabs({ projectId, stage }: { projectId: string; stage: WorkflowSta
 
   return (
     <>
-      <Tabs value={tab} onValueChange={setTab} className="mt-4">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="artifact" className="text-xs">产出物</TabsTrigger>
           <TabsTrigger value="assessment" className="text-xs">质量评估</TabsTrigger>
@@ -445,7 +445,7 @@ export function StageDetailDrawer({
     <Sheet open={!!stage} onOpenChange={(open) => !open && onClose()}>
       <SheetContent ref={scrollRef} side="right" className="w-full overflow-y-auto data-[side=right]:sm:max-w-3xl">
         {/* 头部吸顶：滚动长内容时保持节点身份与状态可见（pr 预留关闭按钮空间） */}
-        <SheetHeader className="sticky top-0 z-10 border-b border-border/40 bg-popover/95 px-4 pt-4 pb-3 pr-12 backdrop-blur-sm">
+        <SheetHeader className="sticky top-0 z-10 border-b border-border/40 bg-popover/95 px-6 pt-4 pb-3 pr-12 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             <div className={`flex size-8 shrink-0 items-center justify-center rounded-lg border ${meta.ring}`}>
               {meta.icon}
@@ -473,11 +473,13 @@ export function StageDetailDrawer({
           )}
         </SheetHeader>
 
-        <StageTabs key={liveStage.id} projectId={projectId} stage={liveStage} />
+        <div className="px-6 pb-8">
+          <StageTabs key={liveStage.id} projectId={projectId} stage={liveStage} />
+        </div>
 
         {/* 审批操作栏吸底：待确认时无需滚动即可完成批准/打回（附质量分摘要） */}
         {liveStage.status === "waiting_approval" && liveStage.isCheckpoint && (
-          <div className="sticky bottom-0 z-10 animate-in border-t border-border/60 bg-popover/95 px-1 pt-3 pb-1 shadow-[0_-8px_16px_-12px_rgba(0,0,0,0.35)] backdrop-blur-sm fade-in-0 slide-in-from-bottom-2 duration-300">
+          <div className="sticky bottom-0 z-10 animate-in border-t border-border/60 bg-popover/95 px-6 pt-3 pb-3 shadow-[0_-8px_16px_-12px_rgba(0,0,0,0.35)] backdrop-blur-sm fade-in-0 slide-in-from-bottom-2 duration-300">
             <ApprovalActions projectId={projectId} stage={liveStage} />
           </div>
         )}
