@@ -6,7 +6,6 @@ import {
   FileTextIcon,
   FilmIcon,
   ImageIcon,
-  InboxIcon,
   LayoutTemplateIcon,
   LoaderCircleIcon,
   MicIcon,
@@ -27,6 +26,7 @@ import type { ArtifactKind, WorkflowStage } from "@/lib/types"
 import { Badge } from "@/components/ui/badge"
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart"
 import { Button } from "@/components/ui/button"
+import { NoData } from "@/components/ui/no-data"
 import { Progress } from "@/components/ui/progress"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -35,12 +35,18 @@ import { STAGE_STATUS_META } from "@/components/projects/workflow-canvas"
 
 /** 基于 shadcn Chart（RadialBarChart）二次开发：质量分环形图 */
 function ScoreRing({ score }: { score: number }) {
-  const color = score >= GATE_PASS_SCORE ? "#10b981" : score >= 60 ? "#f59e0b" : "#ef4444"
+  // 语义色走主题变量（600 浅色 / 400 深色，与 status-* 约定一致，dark 自动适配）
+  const scoreFill =
+    score >= GATE_PASS_SCORE
+      ? "[--score-fill:var(--color-emerald-600)] dark:[--score-fill:var(--color-emerald-400)]"
+      : score >= 60
+        ? "[--score-fill:var(--color-amber-600)] dark:[--score-fill:var(--color-amber-400)]"
+        : "[--score-fill:var(--color-red-600)] dark:[--score-fill:var(--color-red-400)]"
   const chartConfig = {
-    score: { label: "质量分", color },
+    score: { label: "质量分", color: "var(--score-fill)" },
   } satisfies ChartConfig
   return (
-    <div className="relative size-24 shrink-0">
+    <div className={`relative size-24 shrink-0 ${scoreFill}`}>
       <ChartContainer config={chartConfig} className="size-full">
         <RadialBarChart
           data={[{ score }]}
@@ -51,13 +57,13 @@ function ScoreRing({ score }: { score: number }) {
           endAngle={-270}
         >
           <PolarAngleAxis type="number" domain={[0, 100]} tick={false} axisLine={false} />
-          <RadialBar dataKey="score" cornerRadius={4} background={{ fill: "var(--border)" }} />
+          <RadialBar dataKey="score" fill="var(--score-fill)" cornerRadius={4} background={{ fill: "var(--border)" }} />
         </RadialBarChart>
       </ChartContainer>
       <div className="absolute inset-0 grid place-items-center">
         <div className="text-center">
-          <div className="text-2xl font-bold tabular-nums" style={{ color }}>{score}</div>
-          <div className="text-[11px] text-muted-foreground">/ 100</div>
+          <div className="text-2xl font-bold tabular-nums text-(--score-fill)">{score}</div>
+          <div className="text-xs text-muted-foreground">/ 100</div>
         </div>
       </div>
     </div>
@@ -84,22 +90,12 @@ function metricColor(score: number): string {
       : "text-danger"
 }
 
-/** 空态占位：图标 + 说明（按节点状态给出上下文） */
-function EmptyState({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2.5 py-12 text-center">
-      {icon}
-      <p className="text-xs text-muted-foreground">{children}</p>
-    </div>
-  )
-}
-
 /** 产出元数据统计卡（shadcn stat 样式） */
 function StatCell({ value, unit }: { value: number; unit: string }) {
   return (
-    <div className="rounded-lg border bg-muted/40 px-3 py-2 text-center">
+    <div className="rounded-lg border bg-muted/30 px-3 py-2 text-center">
       <div className="text-base font-semibold tabular-nums">{value}</div>
-      <div className="text-[11px] text-muted-foreground">{unit}</div>
+      <div className="text-xs text-muted-foreground">{unit}</div>
     </div>
   )
 }
@@ -113,27 +109,10 @@ function ArtifactPanel({ projectId, stage }: { projectId: string; stage: Workflo
 
   if (!a) {
     const busy = stage.status === "running" || stage.status === "iterating"
-    const msg = busy
-      ? "引擎正在生成产出…"
-      : stage.status === "failed"
-        ? "该环节已中断，无产出"
-        : stage.status === "skipped"
-          ? "该环节已被跳过"
-          : stage.status === "pending"
-            ? "该环节尚未开始"
-            : "本环节尚无产出"
-    return (
-      <EmptyState
-        icon={
-          busy ? (
-            <LoaderCircleIcon className="size-6 animate-spin text-primary/60" />
-          ) : (
-            <InboxIcon className="size-6 text-muted-foreground/40" />
-          )
-        }
-      >
-        {msg}
-      </EmptyState>
+    return busy ? (
+      <NoData icon={<LoaderCircleIcon className="size-6 animate-spin text-primary/60" />} text="引擎正在生成产出…" />
+    ) : (
+      <NoData />
     )
   }
 
@@ -162,7 +141,7 @@ function ArtifactPanel({ projectId, stage }: { projectId: string; stage: Workflo
           <p className="text-sm font-medium">{a.title}</p>
           <p className="text-xs text-muted-foreground">{a.summary}</p>
           {editable && (
-            <Badge variant="outline" className="gap-1 status-creative text-[11px]">
+            <Badge variant="outline" className="gap-1 status-creative text-xs">
               <PenLineIcon className="size-3" /> 手作式可编辑
             </Badge>
           )}
@@ -211,25 +190,17 @@ function AssessmentPanel({ stage }: { stage: WorkflowStage }) {
   const a = stage.assessment
   if (!a) {
     const busy = stage.status === "running" || stage.status === "iterating"
-    return (
-      <EmptyState
-        icon={
-          busy ? (
-            <LoaderCircleIcon className="size-6 animate-spin text-primary/60" />
-          ) : (
-            <InboxIcon className="size-6 text-muted-foreground/40" />
-          )
-        }
-      >
-        {busy ? "引擎正在评估质量…" : "尚未产生评估"}
-      </EmptyState>
+    return busy ? (
+      <NoData icon={<LoaderCircleIcon className="size-6 animate-spin text-primary/60" />} text="引擎正在评估质量…" />
+    ) : (
+      <NoData />
     )
   }
   return (
-    <div className="flex items-start gap-6">
+    <div className="flex items-start gap-4">
       <ScoreRing score={a.score} />
       <div className="min-w-0 flex-1 space-y-4">
-        <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+        <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
           {a.metrics.map((m) => (
             <div key={m.key} className="space-y-1.5">
               <div className="flex items-baseline justify-between gap-2 text-xs">
@@ -243,12 +214,12 @@ function AssessmentPanel({ stage }: { stage: WorkflowStage }) {
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="font-medium">置信度 {a.confidence}%</span>
           {a.reviewer && (
-            <Badge variant="outline" className="gap-1 text-[11px]">
+            <Badge variant="outline" className="gap-1 text-xs">
               <ShieldCheckIcon className="size-3" /> 审查：{a.reviewer}
             </Badge>
           )}
         </div>
-        <p className="rounded-lg border-l-2 border-primary/40 bg-muted/30 p-3 text-xs leading-relaxed">{a.feedback}</p>
+        <p className="rounded-lg border-l-2 border-primary/50 bg-muted/30 p-3 text-xs leading-relaxed">{a.feedback}</p>
       </div>
     </div>
   )
@@ -256,18 +227,18 @@ function AssessmentPanel({ stage }: { stage: WorkflowStage }) {
 
 function ReviewsPanel({ stage }: { stage: WorkflowStage }) {
   if (stage.reviews.length === 0) {
-    return <p className="py-8 text-center text-xs text-muted-foreground">暂无审查反馈</p>
+    return <NoData />
   }
   return (
     <div className="space-y-3">
       {stage.reviews.map((r, i) => (
         <div key={i} className="flex items-start gap-3 rounded-lg border bg-card/50 p-3">
-          <Badge variant={r.from === "human" ? "default" : "secondary"} className="mt-0.5 shrink-0 px-1.5 text-[11px]">
+          <Badge variant={r.from === "human" ? "default" : "secondary"} className="mt-0.5 shrink-0 px-2 text-xs">
             {r.from === "human" ? "人工" : "引擎"}
           </Badge>
           <div className="min-w-0 flex-1 space-y-1">
             <p className="text-xs leading-relaxed">{r.text}</p>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {new Date(r.at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
             </p>
           </div>
@@ -279,18 +250,18 @@ function ReviewsPanel({ stage }: { stage: WorkflowStage }) {
 
 function IterationsPanel({ stage }: { stage: WorkflowStage }) {
   if (stage.iterations.length === 0) {
-    return <p className="py-8 text-center text-xs text-muted-foreground">尚无迭代记录</p>
+    return <NoData />
   }
   return (
     <>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         共 {stage.iterations.length} 轮迭代
         {stage.status === "iterating" && <> · 当前第 {stage.iterations.length + 1} 轮进行中</>}
       </p>
       <ol className="relative space-y-4 border-l pl-6">
         {[...stage.iterations].reverse().map((it) => (
           <li key={it.round} className="relative">
-            <span className="absolute top-0 -left-[31px] flex size-5 items-center justify-center rounded-full border bg-card text-[11px] font-semibold tabular-nums shadow-sm">
+            <span className="absolute top-0 -left-[31px] flex size-5 items-center justify-center rounded-full border bg-card text-xs font-semibold tabular-nums shadow-sm">
               {it.round}
             </span>
             <div className="flex items-center justify-between gap-2">
@@ -301,11 +272,11 @@ function IterationsPanel({ stage }: { stage: WorkflowStage }) {
               </span>
             </div>
             {it.reason && (
-              <p className="mt-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+              <p className="mt-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-xs leading-relaxed text-amber-600 dark:text-amber-400">
                 打回原因：{it.reason}
               </p>
             )}
-            <p className="mt-1.5 text-[11px] text-muted-foreground">{it.assessment.feedback}</p>
+            <p className="mt-1.5 text-xs text-muted-foreground">{it.assessment.feedback}</p>
           </li>
         ))}
       </ol>
@@ -339,7 +310,7 @@ function ApprovalActions({ projectId, stage }: { projectId: string; stage: Workf
         {a && (
           <>
             <span className={`text-3xl leading-none font-bold tabular-nums ${scoreColor}`}>{a.score}</span>
-            <span className="shrink-0 text-[11px] leading-tight text-muted-foreground">
+            <span className="shrink-0 text-xs leading-tight text-muted-foreground">
               质量分
               <br />
               置信度 {a.confidence}%
@@ -347,12 +318,12 @@ function ApprovalActions({ projectId, stage }: { projectId: string; stage: Workf
           </>
         )}
         {a && (
-          <p className="min-w-0 flex-1 truncate border-l border-border/60 pl-4 text-[11px] text-muted-foreground">
+          <p className="min-w-0 flex-1 truncate border-l border-border/60 pl-4 text-xs text-muted-foreground">
             {a.feedback}
           </p>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          <Button size="sm" variant="outline" className="gap-1 text-red-600 hover:text-red-600" onClick={() => setRejecting(true)}>
+          <Button size="sm" variant="destructive" className="gap-1" onClick={() => setRejecting(true)}>
             <XIcon /> 打回重写
           </Button>
           <Button size="sm" className="gap-1" onClick={approve}>
@@ -395,7 +366,7 @@ function StageTabs({ projectId, stage }: { projectId: string; stage: WorkflowSta
           <TabsTrigger value="review" className="text-xs">审查反馈</TabsTrigger>
           <TabsTrigger value="iterations" className="text-xs">
             迭代
-            {stage.iterations.length > 1 && <Badge variant="secondary" className="ml-1 px-1 text-[11px]">{stage.iterations.length}</Badge>}
+            {stage.iterations.length > 1 && <Badge variant="secondary" className="ml-1 px-1.5 text-xs">{stage.iterations.length}</Badge>}
           </TabsTrigger>
         </TabsList>
         <TabsContent value="artifact" className="pt-4">
@@ -452,7 +423,7 @@ export function StageDetailDrawer({
             </div>
             <SheetTitle className="truncate text-lg tracking-tight">{liveStage.title}</SheetTitle>
             {stepIndex >= 0 && (
-              <Badge variant="secondary" className="shrink-0 px-1.5 text-[11px] tabular-nums">
+              <Badge variant="secondary" className="shrink-0 px-2 text-xs tabular-nums">
                 {stepIndex + 1}/{project.stages.length} 步
               </Badge>
             )}
@@ -460,7 +431,7 @@ export function StageDetailDrawer({
           </div>
           <p className="text-xs text-muted-foreground">{liveStage.description}</p>
           {liveStage.gate && (
-            <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <ShieldCheckIcon className="size-3 text-emerald-500" />
               质量门禁：{liveStage.gateAgentName} 审查（通过线 {GATE_PASS_SCORE} 分，已打回 {liveStage.gateRetries}/{GATE_MAX_RETRIES}）
             </p>
@@ -468,7 +439,7 @@ export function StageDetailDrawer({
           {["running", "iterating", "waiting_approval"].includes(liveStage.status) && (
             <div className="flex items-center gap-2">
               <Progress value={liveStage.progress} className="h-1 flex-1" />
-              <span className="text-[11px] tabular-nums text-muted-foreground">{liveStage.progress}%</span>
+              <span className="text-xs tabular-nums text-muted-foreground">{liveStage.progress}%</span>
             </div>
           )}
         </SheetHeader>
