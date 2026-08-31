@@ -20,6 +20,7 @@ import type { Project } from "@/lib/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { NoData } from "@/components/ui/no-data"
 import { Progress } from "@/components/ui/progress"
 
 export function ProjectCard({ project }: { project: Project }) {
@@ -28,13 +29,13 @@ export function ProjectCard({ project }: { project: Project }) {
   const nextStage = project.stages.find((s) => s.status === "running" || s.status === "iterating")
 
   return (
-    <Card className="group overflow-hidden pt-0! transition-shadow hover:shadow-md">
+    <Card className="group overflow-hidden pt-0! transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg">
       <Link
         href={`/projects?id=${project.id}`}
         className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60"
       >
         {/* 封面：高度高于资产/知识库卡，匹配宽卡片比例；图标沿用统一的徽章式容器 */}
-        <div className={`relative flex h-32 items-center justify-center bg-gradient-to-br ${project.cover}`}>
+        <div className={`relative flex h-36 items-center justify-center bg-gradient-to-br ${project.cover}`}>
           <div className="flex size-10 items-center justify-center rounded-xl bg-background/70 backdrop-blur transition-transform duration-300 group-hover:scale-110">
             <FilmIcon className="size-5" />
           </div>
@@ -53,7 +54,7 @@ export function ProjectCard({ project }: { project: Project }) {
         </CardHeader>
         <CardContent className="space-y-3">
           {/* min-h-10 与两行高度一致：不同行数的 premise 下，状态行与进度条跨卡片对齐 */}
-          <p className="line-clamp-2 min-h-10 text-xs leading-relaxed text-muted-foreground">{project.premise}</p>
+          <p className="line-clamp-2 min-h-12 text-sm leading-relaxed text-muted-foreground">{project.premise}</p>
           <div className="space-y-1.5">
             <div className="flex h-4 items-center gap-1.5 text-xs text-muted-foreground">
               {nextStage && (
@@ -114,11 +115,11 @@ export function ProjectGrid() {
               onClick={() => setCollapsed((prev) => ({ ...prev, [g.key]: !prev[g.key] }))}
               className="flex w-full items-center gap-3 p-4 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60 active:bg-muted/60"
             >
-              <span className={`flex size-8 shrink-0 items-center justify-center rounded-md ${g.accent}`}>
+              <span className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${g.accent}`}>
                 {g.icon}
               </span>
               <span className="text-sm font-semibold">{g.label}</span>
-              <Badge variant="secondary" className="text-[11px] tabular-nums">{items.length}</Badge>
+              <Badge variant="secondary" className="text-xs tabular-nums">{items.length}</Badge>
               <span className="hidden text-xs text-muted-foreground sm:inline">{g.hint}</span>
               <ChevronDownIcon
                 className={`ml-auto size-4 text-muted-foreground transition-transform duration-300 ${open ? "" : "-rotate-90"}`}
@@ -131,7 +132,8 @@ export function ProjectGrid() {
               }`}
             >
               <div className="min-h-0 overflow-hidden">
-                <div className="bg-muted/40 p-4">
+                {/* @container：让网格的 @3xl/@7xl 容器查询生效（修复此前恒为单列的问题） */}
+                <div className="@container bg-muted/30 p-4">
                   {items.length > 0 ? (
                     <div className="grid gap-4 @3xl:grid-cols-2 @7xl:grid-cols-3">
                       {items.map((p) => (
@@ -139,9 +141,7 @@ export function ProjectGrid() {
                       ))}
                     </div>
                   ) : (
-                    <p className="py-8 text-center text-xs text-muted-foreground">
-                      暂无{g.label}的项目
-                    </p>
+                    <NoData text={`暂无${g.label}的项目`} />
                   )}
                 </div>
               </div>
