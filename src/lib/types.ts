@@ -22,6 +22,7 @@ export type ArtifactKind =
   | "video"
   | "voiceover"
   | "final_cut"
+  | "previs"
 
 export interface QualityMetric {
   key: string
@@ -46,6 +47,30 @@ export interface Artifact {
   words?: number // 字数
   durationSec?: number // 视频/配音/成片时长
   scenes?: number
+}
+
+export interface BlockingItem {
+  id: string
+  kind: "character" | "prop" | "terrain"
+  name: string
+  position: [number, number, number]
+  rotationY: number
+  scale: number
+}
+
+export interface PrevisShot {
+  shotIndex: number
+  camera: { position: [number, number, number]; target: [number, number, number]; fov: number }
+  blocking: BlockingItem[]
+  previewSvg: string
+  depthSvg: string
+  edgeSvg: string
+}
+
+/** 判别联合：previs 专用载荷，与通用 Artifact 平级 */
+export interface PrevisArtifact extends Artifact {
+  kind: "previs"
+  shots: PrevisShot[]
 }
 
 export interface Iteration {
@@ -76,6 +101,8 @@ export interface WorkflowStage {
   reviews: ReviewComment[]
   gateRetries: number // 门禁打回次数（上限 3）
   progress: number // 0-100（running 时动画推进）
+  /** 参考附件：上游 previs 产物注入（只读快照，重流转时更新） */
+  references?: { kind: "previs"; depthUrl: string; edgeUrl: string }[]
   startedAt?: string
   finishedAt?: string
 }
