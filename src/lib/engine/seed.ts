@@ -47,10 +47,11 @@ export const SEED_KNOWLEDGE: KnowledgeBase[] = [
 
 export const SEED_MODELS: ModelConfig[] = [
   { id: "llm", name: "大语言模型", provider: "DeepSeek / Anthropic / OpenAI", options: [
-    { id: "deepseek-r1", label: "DeepSeek-R1" },
+    { id: "deepseek-v4-flash", label: "DeepSeek-V4-Flash" },
+    { id: "deepseek-v4-pro", label: "DeepSeek-V4-Pro" },
     { id: "claude-sonnet", label: "Claude Sonnet 4.6" },
     { id: "gpt-4o", label: "GPT-4o" },
-  ], selected: "deepseek-r1", apiKeyConfigured: true, status: "connected" },
+  ], selected: "deepseek-v4-flash", apiKeyConfigured: true, status: "connected" },
   { id: "video", name: "视频生成模型", provider: "Seedance / Google / Kuaishou", options: [
     { id: "seedance-v2", label: "Seedance v2.0" },
     { id: "veo-3.1", label: "Veo 3.1" },
