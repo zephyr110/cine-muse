@@ -27,7 +27,8 @@ import type {
   WorkflowStage,
 } from "@/lib/types"
 
-export const STORAGE_KEY = "cine-muse-state-v1"
+export const STORAGE_KEY = "cine-muse-state-v2"
+export const LEGACY_STORAGE_KEY = "cine-muse-state-v1"
 
 /**
  * 恢复数据规范化：为旧版本存储补齐缺失字段（顶层与项目/节点级）。
@@ -75,6 +76,26 @@ function normalizeState(s: AppState): AppState {
  * localStorage/SQLite 恢复由 store 的引导 effect 在水合后异步完成并 dispatch HYDRATE。 */
 export function createInitialState(): AppState {
   return createSeedState()
+}
+
+/** v1 → v2：旧数据结构缺少 references 等新字段，直接补默认值即可兼容。
+ * 合并基准为 createInitialState()：旧数据缺顶层字段时回落到种子默认，已有字段原样保留。
+ * 幂等 —— v2 数据再次经过本函数结果不变，可在任意持久化源上安全调用。 */
+export function migrateAppState(raw: unknown): AppState {
+  const s = raw as Partial<AppState> | null
+  return {
+    ...createInitialState(),
+    ...(s ?? {}),
+    projects: (s?.projects ?? []).map((p) => ({
+      ...p,
+      stages: (p.stages ?? []).map((st) => ({
+        ...st,
+        references: st.references ?? undefined,
+        iterations: st.iterations ?? [],
+        reviews: st.reviews ?? [],
+      })),
+    })),
+  } as AppState
 }
 
 const EVT_CAP = 120

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { engineReducer, createInitialState } from "./reducer"
+import { engineReducer, createInitialState, migrateAppState } from "./reducer"
 import { makePrevisShot } from "./previs-types"
 import { renderPrevisShot } from "./previs-render"
 import type { AppState, Artifact, PrevisShot } from "@/lib/types"
@@ -53,5 +53,19 @@ describe("previs reducer", () => {
     const stg = p.stages[0]
     const next = engineReducer(state, { type: "RERENDER_PREVIS", projectId: p.id, stageId: stg.id })
     expect(next.projects[0].stages[0].artifact).toBeDefined()
+  })
+})
+
+describe("migrateAppState", () => {
+  it("v1 数据迁移：旧项目无 previs 字段不崩溃", () => {
+    const legacy = { version: 1, projects: [{ id: "p1", stages: [{ id: "s1", agentId: "video_gen", references: undefined }] }] }
+    const migrated = migrateAppState(legacy)
+    expect(Array.isArray(migrated.projects)).toBe(true)
+    // 真实 v1 项目不被种子数据覆盖
+    expect(migrated.projects[0]?.id).toBe("p1")
+    // 缺省字段补默认值：iterations/reviews 为空数组，references 保持可选
+    expect(migrated.projects[0]?.stages[0].iterations).toEqual([])
+    expect(migrated.projects[0]?.stages[0].reviews).toEqual([])
+    expect(migrated.projects[0]?.stages[0].references).toBeUndefined()
   })
 })
