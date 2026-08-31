@@ -6,8 +6,10 @@ import { LoaderCircleIcon, ShieldCheckIcon } from "lucide-react"
 import { PolarAngleAxis, RadialBar, RadialBarChart } from "recharts"
 
 import { GATE_MAX_RETRIES, GATE_PASS_SCORE } from "@/lib/engine/templates"
+import { isPrevisArtifact } from "@/lib/engine/previs-types"
+import { svgDataUrl } from "@/lib/engine/previs-render"
 import { useApp, useProject } from "@/lib/store"
-import type { ArtifactKind, WorkflowStage } from "@/lib/types"
+import type { ArtifactKind, PrevisArtifact, WorkflowStage } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart"
@@ -63,6 +65,7 @@ const KIND_LABEL: Record<ArtifactKind, string> = {
   video: "视频",
   voiceover: "配音",
   final_cut: "成片",
+  previs: "预演",
 }
 
 /** 分数 → 语义色（门禁通过线 75 / 及格线 60） */
@@ -83,6 +86,47 @@ function StatCell({ value, unit }: { value: number; unit: string }) {
   )
 }
 
+/** 预演台产物：布景/深度/边缘三图 + 机位与摆位参数 */
+function PrevisPanel({ artifact }: { artifact: PrevisArtifact }) {
+  return (
+    <div className="space-y-4">
+      {artifact.shots.map((shot) => (
+        <div key={shot.shotIndex} className="space-y-2 rounded-lg border bg-muted/30 p-3">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span className="font-medium">镜头 {shot.shotIndex + 1}</span>
+            <span className="tabular-nums">
+              机位 ({shot.camera.position.join(", ")}) · FOV {shot.camera.fov}°
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { label: "预演帧", src: svgDataUrl(shot.previewSvg) },
+              { label: "深度图", src: svgDataUrl(shot.depthSvg) },
+              { label: "边缘图", src: svgDataUrl(shot.edgeSvg) },
+            ].map((m) => (
+              <figure key={m.label} className="space-y-1">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={m.src} alt={m.label} className="aspect-video w-full rounded-md border bg-background object-cover" />
+                <figcaption className="text-center text-[11px] text-muted-foreground">{m.label}</figcaption>
+              </figure>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {shot.blocking.map((b) => (
+              <Badge key={b.id} variant="outline" className="text-[11px]">
+                {b.kind === "character" ? "角色" : b.kind === "prop" ? "道具" : "地形"} · {b.name}
+                <span className="ml-1 tabular-nums text-muted-foreground">
+                  ({b.position[0]}, {b.position[2]})
+                </span>
+              </Badge>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function ArtifactPanel({ projectId, stage }: { projectId: string; stage: WorkflowStage }) {
   const { state, dispatch } = useApp()
   const project = state.projects.find((p) => p.id === projectId)
@@ -97,6 +141,10 @@ function ArtifactPanel({ projectId, stage }: { projectId: string; stage: Workflo
     ) : (
       <NoData />
     )
+  }
+
+  if (isPrevisArtifact(a)) {
+    return <PrevisPanel artifact={a} />
   }
 
   const editable =
@@ -124,6 +172,11 @@ function ArtifactPanel({ projectId, stage }: { projectId: string; stage: Workflo
             {editable && (
               <Badge variant="outline" className="status-creative text-xs">
                 手作式可编辑
+              </Badge>
+            )}
+            {stage.references && stage.references.length > 0 && (
+              <Badge variant="outline" className="gap-1 text-[11px]">
+                <ShieldCheckIcon className="size-3 text-primary" /> 参考附件 · 预演深度/边缘图
               </Badge>
             )}
           </div>
