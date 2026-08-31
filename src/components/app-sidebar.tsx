@@ -42,7 +42,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { SettingsDialog } from "@/components/settings/settings-dialog"
 
@@ -134,6 +134,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             render={<Button variant="ghost" className="mt-2 h-auto w-full justify-start gap-2.5 px-3 py-2.5" />}
           >
             <Avatar className="size-6 rounded-full">
+              <AvatarImage src={brandLogo.src} alt="Cine Muse" />
               <AvatarFallback className="rounded-full bg-primary/10 text-xs text-primary">
                 {(user?.name.trim()[0] ?? "U").toUpperCase()}
               </AvatarFallback>
