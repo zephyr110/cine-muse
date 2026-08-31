@@ -22,14 +22,17 @@ describe("renderDepthSvg", () => {
   it("角色在画面前景 → 更亮（灰度更高）", () => {
     const s = shot()
     s.blocking = [
-      { ...s.blocking[0], position: [0, 0, 10] }, // 地形远处
-      { ...s.blocking[1], position: [0, 0, 1] },  // 角色近处
+      { ...s.blocking[0], position: [0, 0, -8] }, // 地形远处 (dist≈16.1)
+      { ...s.blocking[1], position: [0, 0, 7] },  // 角色近处 (dist≈2.24)
     ]
     const svg = renderDepthSvg(s.blocking)
-    const terrainFill = svg.match(/fill="([^"]*)"[^>]*>[\s\S]*?terrain/i)
-    const charFill = svg.match(/fill="([^"]*)"[^>]*>[\s\S]*?character/i)
+    const terrainFill = svg.match(/fill="rgb\(([^)]+)\)"[^>]*data-kind="terrain"/)
+    const charFill = svg.match(/fill="rgb\(([^)]+)\)"[^>]*data-kind="character"/)
     expect(charFill?.[1]).toBeTruthy()
     expect(terrainFill?.[1]).toBeTruthy()
+    const terrainGray = Number(terrainFill?.[1].split(",")[0])
+    const charGray = Number(charFill?.[1].split(",")[0])
+    expect(charGray).toBeGreaterThan(terrainGray)
   })
 })
 
