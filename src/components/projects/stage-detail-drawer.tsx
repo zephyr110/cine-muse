@@ -359,7 +359,7 @@ function StageTabs({ projectId, stage }: { projectId: string; stage: WorkflowSta
 
   return (
     <>
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col">
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="artifact" className="text-xs">产出物</TabsTrigger>
           <TabsTrigger value="assessment" className="text-xs">质量评估</TabsTrigger>
@@ -369,16 +369,16 @@ function StageTabs({ projectId, stage }: { projectId: string; stage: WorkflowSta
             {stage.iterations.length > 1 && <Badge variant="secondary" className="ml-1 px-1.5 text-xs">{stage.iterations.length}</Badge>}
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="artifact" className="pt-4">
+        <TabsContent value="artifact" className="flex flex-1 flex-col pt-4">
           <ArtifactPanel projectId={projectId} stage={stage} />
         </TabsContent>
-        <TabsContent value="assessment" className="pt-4">
+        <TabsContent value="assessment" className="flex flex-1 flex-col pt-4">
           <AssessmentPanel stage={stage} />
         </TabsContent>
-        <TabsContent value="review" className="pt-4">
+        <TabsContent value="review" className="flex flex-1 flex-col pt-4">
           <ReviewsPanel stage={stage} />
         </TabsContent>
-        <TabsContent value="iterations" className="pt-4">
+        <TabsContent value="iterations" className="flex flex-1 flex-col pt-4">
           <IterationsPanel stage={stage} />
         </TabsContent>
       </Tabs>
@@ -444,7 +444,7 @@ export function StageDetailDrawer({
           )}
         </SheetHeader>
 
-        <div className="px-6 pb-8">
+        <div className="flex flex-1 flex-col px-6 pb-8">
           <StageTabs key={liveStage.id} projectId={projectId} stage={liveStage} />
         </div>
 

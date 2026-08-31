@@ -14,7 +14,7 @@ export function NoData({
   className?: string
 }) {
   return (
-    <div className={cn("flex flex-col items-center justify-center gap-3 py-12 text-center", className)}>
+    <div className={cn("flex flex-1 flex-col items-center justify-center gap-3 py-12 text-center", className)}>
       {icon ?? <InboxIcon className="size-6 text-muted-foreground/40" />}
       <p className="text-xs text-muted-foreground">{text}</p>
     </div>
