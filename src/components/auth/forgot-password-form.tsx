@@ -3,7 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { ArrowLeftIcon, CheckCircle2Icon, LoaderCircleIcon } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { useApp } from "@/lib/store"
 import { apiJson } from "@/lib/api"
@@ -24,7 +24,7 @@ export function ForgotPasswordForm() {
     e.preventDefault()
     if (!hydrated) return
     if (!isValidEmail(email)) {
-      toast.error("请输入有效的邮箱地址")
+      toast.add({ title: "请输入有效的邮箱地址", type: "error" })
       return
     }
     try {
@@ -34,7 +34,7 @@ export function ForgotPasswordForm() {
       })
       setStep("reset")
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "验证失败，请确认本地服务已启动")
+      toast.add({ title: err instanceof Error ? err.message : "验证失败，请确认本地服务已启动", type: "error" })
     }
   }
 
@@ -43,11 +43,11 @@ export function ForgotPasswordForm() {
     if (loading) return
     const pwErr = validatePassword(password)
     if (pwErr) {
-      toast.error(pwErr)
+      toast.add({ title: pwErr, type: "error" })
       return
     }
     if (password !== confirm) {
-      toast.error("两次输入的密码不一致")
+      toast.add({ title: "两次输入的密码不一致", type: "error" })
       return
     }
     setLoading(true)
@@ -58,7 +58,7 @@ export function ForgotPasswordForm() {
       })
       setStep("done")
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "重置失败，请确认本地服务已启动")
+      toast.add({ title: err instanceof Error ? err.message : "重置失败，请确认本地服务已启动", type: "error" })
     } finally {
       setLoading(false)
     }
@@ -82,7 +82,7 @@ export function ForgotPasswordForm() {
           <form onSubmit={checkAccount} className="flex flex-col gap-6">
             <div className="flex flex-col gap-2">
               <Label htmlFor="fp-email">账号邮箱</Label>
-              <Input
+              <Input className="h-9"
                 id="fp-email"
                 type="email"
                 required
@@ -91,7 +91,7 @@ export function ForgotPasswordForm() {
                 onChange={(e) => setEmail(e.target.value)}
               />
             </div>
-            <Button type="submit" className="w-full">
+            <Button type="submit" className="h-9 w-full">
               下一步
             </Button>
           </form>
@@ -109,7 +109,7 @@ export function ForgotPasswordForm() {
           <form onSubmit={reset} className="flex flex-col gap-6">
             <div className="flex flex-col gap-2">
               <Label htmlFor="fp-password">新密码</Label>
-              <Input
+              <Input className="h-9"
                 id="fp-password"
                 type="password"
                 required
@@ -121,7 +121,7 @@ export function ForgotPasswordForm() {
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="fp-confirm">确认新密码</Label>
-              <Input
+              <Input className="h-9"
                 id="fp-confirm"
                 type="password"
                 required
@@ -131,7 +131,7 @@ export function ForgotPasswordForm() {
                 onChange={(e) => setConfirm(e.target.value)}
               />
             </div>
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button type="submit" className="h-9 w-full" disabled={loading}>
               {loading && <LoaderCircleIcon className="size-4 animate-spin" />}
               {loading ? "重置中…" : "重置密码"}
             </Button>

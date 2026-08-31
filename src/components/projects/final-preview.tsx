@@ -7,7 +7,7 @@ import {
   PlayIcon,
   Share2Icon,
 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { useProject } from "@/lib/store"
 import { formatMinutes } from "@/lib/format"
@@ -86,12 +86,12 @@ export function FinalPreview({ projectId }: { projectId: string }) {
             </div>
             <div className="flex items-center gap-2">
               <Tooltip>
-                <TooltipTrigger render={<Button size="sm" variant="outline" onClick={() => toast.info("导出任务已创建，已加入后台队列")} />}>
+                <TooltipTrigger render={<Button size="sm" variant="outline" onClick={() => toast.add({ title: "导出任务已创建，已加入后台队列", type: "info" })} />}>
                     <DownloadIcon /> 导出
                   </TooltipTrigger>
                 <TooltipContent>真实渲染导出将在接入引擎后开放</TooltipContent>
               </Tooltip>
-              <Button size="sm" variant="outline" onClick={() => toast.info("分享链接已复制")}>
+              <Button size="sm" variant="outline" onClick={() => toast.add({ title: "分享链接已复制", type: "info" })}>
                 <Share2Icon /> 分享
               </Button>
             </div>

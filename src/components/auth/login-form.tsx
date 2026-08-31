@@ -4,7 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { LoaderCircleIcon } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { useApp } from "@/lib/store"
 import { apiJson, setToken } from "@/lib/api"
@@ -30,7 +30,7 @@ export function LoginForm() {
     if (!hydrated || loading) return
     const pwErr = validatePassword(password)
     if (pwErr) {
-      toast.error(pwErr)
+      toast.add({ title: pwErr, type: "error" })
       return
     }
     setLoading(true)
@@ -44,10 +44,10 @@ export function LoginForm() {
       )
       setToken(token)
       dispatch({ type: "LOGIN", email: email.trim().toLowerCase(), name })
-      toast.success(`欢迎回来，${name}`)
+      toast.add({ title: `欢迎回来，${name}`, type: "success" })
       router.push("/dashboard")
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "登录失败，请确认本地服务已启动")
+      toast.add({ title: err instanceof Error ? err.message : "登录失败，请确认本地服务已启动", type: "error" })
     } finally {
       setLoading(false)
     }
@@ -74,10 +74,10 @@ export function LoginForm() {
       }
       setToken(res.token)
       dispatch({ type: "LOGIN", email: res.email, name: res.name })
-      toast.success("已进入演示账号")
+      toast.add({ title: "已进入演示账号", type: "success" })
       router.push("/dashboard")
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "演示账号不可用，请检查本地服务")
+      toast.add({ title: err instanceof Error ? err.message : "演示账号不可用，请检查本地服务", type: "error" })
     } finally {
       setLoading(false)
     }
@@ -93,7 +93,7 @@ export function LoginForm() {
       <form onSubmit={login} className="flex flex-col gap-6">
         <div className="flex flex-col gap-2">
           <Label htmlFor="login-email">账号邮箱</Label>
-          <Input
+          <Input className="h-9"
             id="login-email"
             type="email"
             required
@@ -113,7 +113,7 @@ export function LoginForm() {
               忘记密码？
             </Link>
           </div>
-          <Input
+          <Input className="h-9"
             id="login-password"
             type="password"
             required
@@ -123,14 +123,14 @@ export function LoginForm() {
             onChange={(e) => setPassword(e.target.value)}
           />
         </div>
-        <Button type="submit" className="w-full" disabled={loading}>
+        <Button type="submit" className="h-9 w-full" disabled={loading}>
           {loading && <LoaderCircleIcon className="size-4 animate-spin" />}
           {loading ? "验证中…" : "登录"}
         </Button>
       </form>
 
 
-      <Button type="button" variant="outline" className="w-full" disabled={loading} onClick={demoLogin}>
+      <Button type="button" variant="outline" className="h-9 w-full" disabled={loading} onClick={demoLogin}>
         使用演示账号体验
       </Button>
       <p className="text-center text-[11px] text-muted-foreground">演示账号：demo@cine.studio · 密码 demo1234</p>

@@ -9,7 +9,7 @@ import {
   KeyRoundIcon,
   ShieldCheckIcon,
 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { useApp } from "@/lib/store"
 import { Badge } from "@/components/ui/badge"
@@ -92,7 +92,7 @@ export function ModelSettings() {
                 <Button
                   size="sm"
                   variant={m.apiKeyConfigured ? "outline" : "default"}
-                  onClick={() => toast.info(`「${m.name}」密钥配置窗口（演示模式）`)}
+                  onClick={() => toast.add({ title: `「${m.name}」密钥配置窗口（演示模式）`, type: "info" })}
                 >
                   <KeyRoundIcon /> {m.apiKeyConfigured ? "更换密钥" : "配置密钥"}
                 </Button>

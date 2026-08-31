@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster } from "@/components/ui/toast";
 
 import { ThemeProvider } from "@/lib/theme";
 
@@ -47,7 +47,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <ThemeProvider>
             <TooltipProvider>
               {children}
-              <Toaster position="top-right" richColors closeButton />
+              <Toaster />
             </TooltipProvider>
           </ThemeProvider>
         </AppProvider>

@@ -6,7 +6,7 @@
  * - 浏览器：localStorage 同步恢复（开发环境）
  * - 状态变更防抖持久化（Electron → SQLite，浏览器 → localStorage）
  * - tick 定时器驱动模拟引擎推进（hydrated 后才启动）
- * - 事件流增量 → sonner 通知收口（交互规范 4.6，图标统一 lucide）
+ * - 事件流增量 → shadcn base toast 通知收口（按 type 渲染语义图标）
  */
 
 import * as React from "react"
@@ -30,7 +30,7 @@ import {
   Unlink2Icon,
   XCircleIcon,
 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { createInitialState, engineReducer, STORAGE_KEY } from "@/lib/engine/reducer"
 import { API_URL, apiJson, clearToken, detectApi, getToken, isApiAvailable } from "@/lib/api"
@@ -316,11 +316,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     for (const ev of fresh.reverse()) {
       const cfg = EVENT_TOAST[ev.kind]
       if (!cfg) continue
-      const opts = { icon: cfg.icon }
-      if (cfg.type === "success") toast.success(ev.text, opts)
-      else if (cfg.type === "error") toast.error(ev.text, opts)
-      else if (cfg.type === "warning") toast.warning(ev.text, opts)
-      else toast.info(ev.text, opts)
+      // shadcn base toast 渲染器按 type 驱动语义图标（不再使用自定义 icon）
+      toast.add({ title: ev.text, type: cfg.type })
     }
   }, [state.events])
 

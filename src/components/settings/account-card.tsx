@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { KeyRoundIcon, LoaderCircleIcon, ShieldCheckIcon } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { useApp } from "@/lib/store"
 import { apiJson } from "@/lib/api"
@@ -26,16 +26,16 @@ export function AccountCard() {
     e.preventDefault()
     if (loading) return
     if (!user) {
-      toast.error("请先登录")
+      toast.add({ title: "请先登录", type: "error" })
       return
     }
     const pwErr = validatePassword(password)
     if (pwErr) {
-      toast.error(pwErr)
+      toast.add({ title: pwErr, type: "error" })
       return
     }
     if (password !== confirm) {
-      toast.error("两次输入的新密码不一致")
+      toast.add({ title: "两次输入的新密码不一致", type: "error" })
       return
     }
     setLoading(true)
@@ -47,9 +47,9 @@ export function AccountCard() {
       setOldPassword("")
       setPassword("")
       setConfirm("")
-      toast.success("密码已更新")
+      toast.add({ title: "密码已更新", type: "success" })
     } catch (err) {
-      toast.error(err instanceof TypeError ? "修改失败，请确认本地服务已启动" : err instanceof Error ? err.message : "修改失败")
+      toast.add({ title: err instanceof TypeError ? "修改失败，请确认本地服务已启动" : err instanceof Error ? err.message : "修改失败", type: "error" })
     } finally {
       setLoading(false)
     }

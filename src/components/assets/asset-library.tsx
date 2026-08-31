@@ -27,7 +27,7 @@ import {
   UsersRoundIcon,
   XIcon,
 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { useApp } from "@/lib/store"
 import { assetFileUrl, deleteAssetFile, uploadAssetFile } from "@/lib/api"
@@ -166,7 +166,7 @@ function AssetFormDialog({
       try {
         fileMeta = await uploadAssetFile(file)
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "上传失败")
+        toast.add({ title: err instanceof Error ? err.message : "上传失败", type: "error" })
         setUploading(false)
         return
       }

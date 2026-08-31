@@ -4,7 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { LoaderCircleIcon } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { useApp } from "@/lib/store"
 import { apiJson, setToken } from "@/lib/api"
@@ -31,16 +31,16 @@ export function RegisterForm() {
     if (!hydrated || loading) return
     const em = email.trim().toLowerCase()
     if (!isValidEmail(em)) {
-      toast.error("请输入有效的邮箱地址")
+      toast.add({ title: "请输入有效的邮箱地址", type: "error" })
       return
     }
     const pwErr = validatePassword(password)
     if (pwErr) {
-      toast.error(pwErr)
+      toast.add({ title: pwErr, type: "error" })
       return
     }
     if (password !== confirm) {
-      toast.error("两次输入的密码不一致")
+      toast.add({ title: "两次输入的密码不一致", type: "error" })
       return
     }
     setLoading(true)
@@ -62,10 +62,10 @@ export function RegisterForm() {
       )
       setToken(token)
       dispatch({ type: "LOGIN", email: em, name: serverName })
-      toast.success("注册成功，欢迎加入 Cine Muse")
+      toast.add({ title: "注册成功，欢迎加入 Cine Muse", type: "success" })
       router.push("/dashboard")
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "注册失败，请确认本地服务已启动")
+      toast.add({ title: err instanceof Error ? err.message : "注册失败，请确认本地服务已启动", type: "error" })
     } finally {
       setLoading(false)
     }
@@ -81,7 +81,7 @@ export function RegisterForm() {
       <form onSubmit={submit} className="flex flex-col gap-6">
         <div className="flex flex-col gap-2">
           <Label htmlFor="reg-name">昵称（可选）</Label>
-          <Input
+          <Input className="h-9"
             id="reg-name"
             placeholder="将展示在工作台与资产页"
             value={name}
@@ -90,7 +90,7 @@ export function RegisterForm() {
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="reg-email">账号邮箱</Label>
-          <Input
+          <Input className="h-9"
             id="reg-email"
             type="email"
             required
@@ -102,7 +102,7 @@ export function RegisterForm() {
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="reg-password">密码</Label>
-          <Input
+          <Input className="h-9"
             id="reg-password"
             type="password"
             required
@@ -114,7 +114,7 @@ export function RegisterForm() {
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="reg-confirm">确认密码</Label>
-          <Input
+          <Input className="h-9"
             id="reg-confirm"
             type="password"
             required
@@ -124,7 +124,7 @@ export function RegisterForm() {
             onChange={(e) => setConfirm(e.target.value)}
           />
         </div>
-        <Button type="submit" className="w-full" disabled={loading}>
+        <Button type="submit" className="h-9 w-full" disabled={loading}>
           {loading && <LoaderCircleIcon className="size-4 animate-spin" />}
           {loading ? "注册中…" : "注册并登录"}
         </Button>
