@@ -25,7 +25,7 @@ import type {
   WorkflowStage,
 } from "@/lib/types"
 
-export const STORAGE_KEY = "cine-studio-state-v1"
+export const STORAGE_KEY = "cine-muse-state-v1"
 
 /**
  * 恢复数据规范化：为旧版本存储补齐缺失字段（顶层与项目/节点级）。

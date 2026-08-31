@@ -80,7 +80,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <ClapperboardIcon className="size-5" />
               </div>
               <div className="grid flex-1 text-left leading-tight">
-                <span className="text-base font-semibold">Cine Studio</span>
+                <span className="text-base font-semibold">Cine Muse</span>
                 <span className="truncate text-xs text-muted-foreground">AI 视频生产工作台</span>
               </div>
             </SidebarMenuButton>

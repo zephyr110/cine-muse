@@ -1,8 +1,8 @@
-# Cine Studio
+# Cine Muse
 
 > AI-powered video production workbench — from a one-line idea to a finished cut, driven by a team of sub-agents.
 
-Cine Studio is a desktop AI video generation client built with a **Next.js static renderer + Electron shell + local Express/SQLite service**. The core pipeline is a simulated multi-agent engine: a core chain (screenplay → shot list → video → edit) that you can strengthen with optional "boost" sub-agents at specific stages.
+Cine Muse is a desktop AI video generation client built with a **Next.js static renderer + Electron shell + local Express/SQLite service**. The core pipeline is a simulated multi-agent engine: a core chain (screenplay → shot list → video → edit) that you can strengthen with optional "boost" sub-agents at specific stages.
 
 [EN](README.md) · [中文](README.zh-CN.md)
 

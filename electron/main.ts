@@ -22,7 +22,7 @@ let backendServer: { close: () => void } | undefined
 process.on("uncaughtException", (err) => {
   console.error("[main] uncaughtException:", err)
   try {
-    fs.writeFileSync(path.join(process.env.HOME ?? ".", ".cine-studio-main.log"), String(err?.stack ?? err))
+    fs.writeFileSync(path.join(process.env.HOME ?? ".", ".cine-muse-main.log"), String(err?.stack ?? err))
   } catch {}
 })
 process.on("unhandledRejection", (reason) => {
@@ -37,7 +37,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 1100,
     minHeight: 700,
-    title: "Cine Studio",
+    title: "Cine Muse",
     backgroundColor: "#0a0a0a",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -62,13 +62,13 @@ function createWindow(): void {
   win.webContents.on("did-fail-load", (_e, code, desc) => {
     console.error("[main] did-fail-load:", code, desc)
     dialog.showErrorBox(
-      "Cine Studio 加载失败",
+      "Cine Muse 加载失败",
       `渲染页面未能加载（${code}: ${desc}）。\n\n请确认已执行 pnpm build（静态产物 out/）或开发服务器（pnpm dev）正在运行。`,
     )
   })
   win.webContents.on("render-process-gone", (_e, details) => {
     console.error("[main] render-process-gone:", details.reason)
-    dialog.showErrorBox("Cine Studio 渲染进程异常退出", `原因：${details.reason}`)
+    dialog.showErrorBox("Cine Muse 渲染进程异常退出", `原因：${details.reason}`)
   })
 }
 
@@ -97,7 +97,7 @@ if (!gotTheLock) {
 
     // 内嵌启动本地后端服务（与主进程同生命周期，渲染层经 HTTP 访问）
     try {
-      backendServer = startServer({ dbPath: path.join(app.getPath("userData"), "cine-studio.db") })
+      backendServer = startServer({ dbPath: path.join(app.getPath("userData"), "cine-muse.db") })
     } catch (err) {
       console.error("[main] local backend failed, renderer falls back to local storage:", err)
     }

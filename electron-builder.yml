@@ -1,5 +1,5 @@
-appId: com.cinestudio.desktop
-productName: Cine Studio
+appId: com.cinemuse.desktop
+productName: Cine Muse
 directories:
   output: release
 files:

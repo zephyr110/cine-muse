@@ -1,5 +1,5 @@
 /**
- * Cine Studio 本地后端服务
+ * Cine Muse 本地后端服务
  * - 认证（注册/登录/登出/找回/修改密码）：服务端 scrypt 哈希 + token 会话
  * - /api/state：AppState 全量读写（前端防抖推送）
  * - 仅监听 127.0.0.1，不暴露局域网；无服务时前端回退 localStorage
@@ -219,7 +219,7 @@ function startServer({ port = DEFAULT_PORT, dbPath, onReady } = {}) {
 
   /* ---------- 资产文件上传 ---------- */
 
-  const dbFile = dbPath ?? path.join(os.homedir(), ".cine-studio", "cine-studio.db")
+  const dbFile = dbPath ?? path.join(os.homedir(), ".cine-muse", "cine-muse.db")
   const uploadsDir = path.join(path.dirname(dbFile), "uploads")
   fs.mkdirSync(uploadsDir, { recursive: true })
 
@@ -307,7 +307,7 @@ function startServer({ port = DEFAULT_PORT, dbPath, onReady } = {}) {
 /* 独立运行：node server/index.js [port] */
 if (require.main === module) {
   const port = Number(process.argv[2] ?? process.env.CINE_SERVER_PORT ?? DEFAULT_PORT)
-  // CINE_DB_PATH 与 Electron 内嵌模式共用同一 db 文件（默认 ~/.cine-studio/cine-studio.db）
+  // CINE_DB_PATH 与 Electron 内嵌模式共用同一 db 文件（默认 ~/.cine-muse/cine-muse.db）
   startServer({ port, dbPath: process.env.CINE_DB_PATH })
 }
 

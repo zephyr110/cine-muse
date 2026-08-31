@@ -2,7 +2,7 @@
  * SQLite 持久化层（主进程）
  * - better-sqlite3 直连（单表 kv 不值得引入 ORM 查询构建层；建表 DDL 已在下方显式管理）
  * - 当前为单表 kv（整个 AppState 序列化存储），后续可拆实体表
- * - 数据库文件位于 app.getPath("userData")/cine-studio.db
+ * - 数据库文件位于 app.getPath("userData")/cine-muse.db
  */
 
 import path from "node:path"
@@ -16,7 +16,7 @@ let sqlite: Database.Database | null = null
 
 export function initDb(): void {
   if (sqlite) return
-  const dbPath = path.join(app.getPath("userData"), "cine-studio.db")
+  const dbPath = path.join(app.getPath("userData"), "cine-muse.db")
   // userData 目录首次运行不存在，需显式创建（better-sqlite3 不自动建父目录）
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   sqlite = new Database(dbPath)

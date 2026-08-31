@@ -62,7 +62,7 @@ export function RegisterForm() {
       )
       setToken(token)
       dispatch({ type: "LOGIN", email: em, name: serverName })
-      toast.success("注册成功，欢迎加入 Cine Studio")
+      toast.success("注册成功，欢迎加入 Cine Muse")
       router.push("/dashboard")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "注册失败，请确认本地服务已启动")

@@ -54,7 +54,7 @@ export function SiteHeader() {
         <Breadcrumb>
           <BreadcrumbList>
             <BreadcrumbItem>
-              <BreadcrumbLink render={<Link href="/dashboard" />}>Cine Studio</BreadcrumbLink>
+              <BreadcrumbLink render={<Link href="/dashboard" />}>Cine Muse</BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>

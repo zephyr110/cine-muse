@@ -1,5 +1,5 @@
 /**
- * Cine Studio 领域模型
+ * Cine Muse 领域模型
  * 与《02-产品化实施方案》第五章对齐；引擎契约见 engine/reducer.ts
  */
 

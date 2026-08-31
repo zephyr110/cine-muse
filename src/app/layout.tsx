@@ -19,7 +19,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Cine Studio",
+  title: "Cine Muse",
   description: "从剧本到成片的一站式 AI 视频生产工作台",
 };
 

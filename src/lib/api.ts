@@ -10,7 +10,7 @@ import type { AssetFile } from "@/lib/types"
 export const API_URL =
   process.env.NEXT_PUBLIC_CINE_API_URL ?? "http://127.0.0.1:47832"
 
-const TOKEN_KEY = "cine-studio-token"
+const TOKEN_KEY = "cine-muse-token"
 
 export function getToken(): string | null {
   try {

@@ -1,9 +1,9 @@
 {
-  "name": "cine-studio",
+  "name": "cine-muse",
   "version": "0.1.0",
   "private": true,
   "description": "从剧本到成片的一站式 AI 视频生产工作台（桌面客户端）",
-  "author": "Cine Studio Team",
+  "author": "Cine Muse Team",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "next dev",

@@ -13,7 +13,7 @@ const Database = require("better-sqlite3")
 let sqlite = null
 
 function resolveDefaultDbPath() {
-  return path.join(os.homedir(), ".cine-studio", "cine-studio.db")
+  return path.join(os.homedir(), ".cine-muse", "cine-muse.db")
 }
 
 function initDb(dbPath = resolveDefaultDbPath()) {
