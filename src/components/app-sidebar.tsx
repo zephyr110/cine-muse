@@ -5,13 +5,17 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
   BotIcon,
+  ChevronRightIcon,
   CirclePlusIcon,
   LayoutDashboardIcon,
   FolderOpenIcon,
   LogOutIcon,
+  MonitorIcon,
+  MoonIcon,
   NotebookIcon,
   Settings2Icon,
   SunIcon,
+  type LucideIcon,
 } from "lucide-react"
 
 import brandLogo from "@/app/icon.png"
@@ -31,19 +35,18 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  useSidebar,
 } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { SettingsDialog } from "@/components/settings/settings-dialog"
 
 const NAV = [
@@ -55,18 +58,17 @@ const NAV = [
   ]},
 ]
 
-const THEME_OPTIONS: { value: Theme; label: string }[] = [
-  { value: "light", label: "浅色" },
-  { value: "system", label: "系统" },
-  { value: "dark", label: "深色" },
+const THEME_OPTIONS: { value: Theme; label: string; icon: LucideIcon }[] = [
+  { value: "light", label: "浅色", icon: SunIcon },
+  { value: "system", label: "系统", icon: MonitorIcon },
+  { value: "dark", label: "深色", icon: MoonIcon },
 ]
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
   const { state, dispatch } = useApp()
   const { theme, setTheme } = useTheme()
-  // Theme 是封闭联合类型且 THEME_OPTIONS 全覆盖，findIndex 不可能为 -1（滑块定位）
-  const themeIndex = THEME_OPTIONS.findIndex((t) => t.value === theme)
+  const { isMobile } = useSidebar()
   const router = useRouter()
   const user = state.user
   const [settingsOpen, setSettingsOpen] = React.useState(false)
@@ -131,72 +133,95 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarFooter>
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={<Button variant="ghost" className="mt-2 h-auto w-full justify-start gap-2.5 px-3 py-2.5" />}
+            render={
+              <Button
+                variant="ghost"
+                className="group mt-2 h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-2 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+              />
+            }
           >
-            <Avatar className="size-6 rounded-full">
+            <Avatar className="size-8 shrink-0 rounded-full">
               <AvatarImage src={brandLogo.src} alt="Cine Muse" />
-              <AvatarFallback className="rounded-full bg-primary/10 text-xs text-primary">
+              <AvatarFallback className="rounded-full bg-sidebar-primary text-xs font-semibold text-sidebar-primary-foreground">
                 {(user?.name.trim()[0] ?? "U").toUpperCase()}
               </AvatarFallback>
             </Avatar>
-            <div className="grid flex-1 text-left text-sm leading-tight">
-              <span className="truncate font-medium">{user?.name ?? "创作者工作台"}</span>
-              <span className="truncate text-xs text-muted-foreground">{user?.email ?? "未登录"}</span>
+            <div className="min-w-0 flex-1 text-left leading-tight">
+              <p className="truncate text-sm font-medium">{user?.name ?? "创作者工作台"}</p>
             </div>
+            <ChevronRightIcon className="size-3.5 shrink-0 text-sidebar-foreground/70 transition-transform duration-200 group-data-open:rotate-90" />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-80 space-y-0.5 p-2.5">
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>
-                <div className="flex flex-col gap-1 px-1 py-1.5">
-                  <span className="text-sm font-medium text-foreground">{user?.name ?? "创作者"}</span>
-                  <span className="text-xs font-normal text-muted-foreground">{user?.email ?? "未登录"}</span>
+          <DropdownMenuContent
+            side={isMobile ? "top" : "right"}
+            align={isMobile ? "center" : "start"}
+            sideOffset={8}
+            className="w-64 p-2"
+          >
+            {/* 用户信息卡：头像 + 名称 + 邮箱 */}
+            <div className="rounded-lg bg-muted/50 px-3 py-2.5">
+              <div className="flex items-center gap-2.5">
+                <Avatar className="size-10 shrink-0">
+                  <AvatarImage src={brandLogo.src} alt="Cine Muse" />
+                  <AvatarFallback className="bg-sidebar-primary text-sm font-semibold text-sidebar-primary-foreground">
+                    {(user?.name.trim()[0] ?? "U").toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1 leading-snug">
+                  <p className="truncate text-sm font-semibold">{user?.name ?? "创作者"}</p>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{user?.email ?? "未登录"}</p>
                 </div>
-              </DropdownMenuLabel>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            {/* 主题切换：三段式滑块按钮（浅色 | 系统 | 深色） */}
-            <div className="flex items-center justify-between gap-3 px-2.5 py-2">
-              <span className="flex items-center gap-2 text-sm">
-                <SunIcon className="size-4 text-muted-foreground" />
-                主题切换
-              </span>
-              <ToggleGroup
-                value={[theme]}
-                onValueChange={(v) => { if (v && v.length > 0) setTheme(v[v.length - 1] as Theme) }}
-                spacing={0}
-                className="relative h-8 w-40 shrink-0 rounded-lg bg-muted p-1"
-              >
-                {/* 滑块：宽度 = (轨道内容宽) / 段数，随激活段平移 */}
-                <span
-                  aria-hidden
-                  className="absolute inset-y-1 left-1 w-[calc((100%-0.5rem)/3)] rounded-md bg-background shadow-sm transition-transform duration-200 ease-out"
-                  style={{ transform: `translateX(${themeIndex * 100}%)` }}
-                />
-                {THEME_OPTIONS.map((t) => (
-                  <ToggleGroupItem
-                    key={t.value}
-                    value={t.value}
-                    className="relative z-10 h-6 flex-1 rounded-none px-0 text-xs font-medium hover:bg-transparent hover:text-foreground aria-pressed:bg-transparent aria-pressed:text-foreground text-muted-foreground"
-                  >
-                    {t.label}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
+              </div>
             </div>
-            <DropdownMenuItem className="py-2" onClick={() => setSettingsOpen(true)}>
-              <Settings2Icon /> 系统设置
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="py-2"
-              onClick={async () => {
-                await logout()
-                dispatch({ type: "LOGOUT" })
-                router.push("/login")
-              }}
-            >
-              <LogOutIcon className="size-4" /> 退出登录
-            </DropdownMenuItem>
+
+            <DropdownMenuSeparator className="mx-0 my-2" />
+
+            {/* 主题切换：三段式分段控件（浅色 | 系统 | 深色） */}
+            <div className="flex flex-col gap-3 px-0.5">
+              <div className="flex flex-col gap-1.5">
+                <p className="px-1.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                  主题
+                </p>
+                <div className="inline-flex w-full rounded-lg bg-muted/50 p-1">
+                  {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setTheme(value)}
+                      aria-pressed={theme === value}
+                      className={cn(
+                        "flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-all duration-200",
+                        theme === value
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      )}
+                    >
+                      <Icon className="size-3.5" />
+                      <span>{label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <DropdownMenuSeparator className="mx-0 my-2" />
+
+            <div className="flex flex-col gap-0.5">
+              <DropdownMenuItem
+                className="cursor-pointer gap-2.5 rounded-md px-2.5 py-2"
+                onClick={() => setSettingsOpen(true)}
+              >
+                <Settings2Icon className="size-4 shrink-0 opacity-60" /> 系统设置
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="cursor-pointer gap-2.5 rounded-md px-2.5 py-2 text-destructive focus:text-destructive"
+                onClick={async () => {
+                  await logout()
+                  dispatch({ type: "LOGOUT" })
+                  router.push("/login")
+                }}
+              >
+                <LogOutIcon className="size-4 shrink-0 opacity-60" /> 退出登录
+              </DropdownMenuItem>
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarFooter>
