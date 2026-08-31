@@ -46,7 +46,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { SettingsDialog } from "@/components/settings/settings-dialog"
 
 const NAV = [
@@ -141,7 +141,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             }
           >
             <Avatar className="size-8 shrink-0 rounded-full">
-              <AvatarImage src={brandLogo.src} alt="Cine Muse" />
               <AvatarFallback className="rounded-full bg-sidebar-primary text-xs font-semibold text-sidebar-primary-foreground">
                 {(user?.name.trim()[0] ?? "U").toUpperCase()}
               </AvatarFallback>
@@ -161,7 +160,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <div className="rounded-lg bg-muted/50 px-3 py-2.5">
               <div className="flex items-center gap-2.5">
                 <Avatar className="size-10 shrink-0">
-                  <AvatarImage src={brandLogo.src} alt="Cine Muse" />
                   <AvatarFallback className="bg-sidebar-primary text-sm font-semibold text-sidebar-primary-foreground">
                     {(user?.name.trim()[0] ?? "U").toUpperCase()}
                   </AvatarFallback>
@@ -178,7 +176,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             {/* 主题切换：三段式分段控件（浅色 | 系统 | 深色） */}
             <div className="flex flex-col gap-3 px-0.5">
               <div className="flex flex-col gap-1.5">
-                <p className="px-1.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                <p className="px-1.5 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
                   主题
                 </p>
                 <div className="inline-flex w-full rounded-lg bg-muted/50 p-1">
