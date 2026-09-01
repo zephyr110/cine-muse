@@ -580,8 +580,10 @@ function applyPrevisSnapshot(draft: AppState, stage: WorkflowStage, snapshot: Pr
         const p = draft.projects.find((x) => x.id === action.projectId)
         const s = p?.stages.find((x) => x.id === action.stageId)
         if (!p || !s) return
-        const snap = draft.previsUndo.past.pop()
+        // 先窥视后弹出：跨 stage 的快照不匹配时保留栈顶（撤销按钮按全局栈启用）
+        const snap = draft.previsUndo.past[draft.previsUndo.past.length - 1]
         if (!snap || snap.stageId !== s.id) return
+        draft.previsUndo.past.pop()
         const current = previsSnapshot(s)
         if (current) draft.previsUndo.future.push(current)
         applyPrevisSnapshot(draft, s, snap)
@@ -592,8 +594,9 @@ function applyPrevisSnapshot(draft: AppState, stage: WorkflowStage, snapshot: Pr
         const p = draft.projects.find((x) => x.id === action.projectId)
         const s = p?.stages.find((x) => x.id === action.stageId)
         if (!p || !s) return
-        const snap = draft.previsUndo.future.pop()
+        const snap = draft.previsUndo.future[draft.previsUndo.future.length - 1]
         if (!snap || snap.stageId !== s.id) return
+        draft.previsUndo.future.pop()
         const current = previsSnapshot(s)
         if (current) draft.previsUndo.past.push(current)
         applyPrevisSnapshot(draft, s, snap)

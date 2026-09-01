@@ -169,6 +169,7 @@ export const PrevisViewport = React.forwardRef<
     controls: OrbitControls
     itemMeshes: Map<string, THREE.Object3D>
     camGizmo: THREE.Object3D
+    hlGroup: THREE.Group
     raycaster: THREE.Raycaster
     dragId: string | null
     dragging: boolean
@@ -209,6 +210,11 @@ export const PrevisViewport = React.forwardRef<
     controls.target.set(0, 1, 0)
     controls.enableDamping = true
 
+    // 选中高亮图层（渲染时排除，防止进入导出图）
+    const hlGroup = new THREE.Group()
+    hlGroup.name = "highlight-layer"
+    scene.add(hlGroup)
+
     // 机位对象：线框小盒 + 指向目标的箭头
     const camGizmo = new THREE.Group()
     const camBox = new THREE.Mesh(
@@ -226,7 +232,7 @@ export const PrevisViewport = React.forwardRef<
 
     const st = {
       renderer, scene, camera, controls, itemMeshes: new Map<string, THREE.Object3D>(),
-      camGizmo, raycaster: new THREE.Raycaster(), dragId: null, dragging: false, raf: 0,
+      camGizmo, hlGroup, raycaster: new THREE.Raycaster(), dragId: null, dragging: false, raf: 0,
     }
     stateRef.current = st
 
@@ -260,34 +266,66 @@ export const PrevisViewport = React.forwardRef<
     }
   }, [])
 
-  // —— 同步布景项网格 ——
+  /** 递归释放几何与材质（重建/移除时防 GPU 缓冲泄漏） */
+  function disposeObject(obj: THREE.Object3D) {
+    obj.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (m.geometry) m.geometry.dispose()
+      const mat = m.material as THREE.Material | THREE.Material[] | undefined
+      if (Array.isArray(mat)) mat.forEach((x) => x.dispose())
+      else mat?.dispose()
+    })
+  }
+
+  // —— 同步布景项网格（姿势/体型/滑杆变化时按姿态签名重建） ——
   React.useEffect(() => {
     const st = stateRef.current
     if (!st) return
     const keep = new Set<string>()
     for (const item of propsRef.current.items) {
       keep.add(item.id)
+      // 姿态签名：体型/姿势/关节角度任一变化 → 重建人偶
+      const rigKey =
+        item.kind === "character" ? `${item.bodyType ?? ""}|${item.poseId ?? ""}|${JSON.stringify(item.controls ?? {})}` : ""
       let mesh = st.itemMeshes.get(item.id)
       if (!mesh) {
         mesh = buildMesh(item)
         st.scene.add(mesh)
         st.itemMeshes.set(item.id, mesh)
+      } else if (mesh.userData.rigKey !== rigKey) {
+        disposeObject(mesh)
+        st.scene.remove(mesh)
+        mesh = buildMesh(item)
+        st.scene.add(mesh)
+        st.itemMeshes.set(item.id, mesh)
       }
+      mesh.userData.rigKey = rigKey
       const [x, y, z] = item.position
       mesh.position.set(x, y + (item.kind === "terrain" ? 0 : 1), z)
       mesh.rotation.y = item.rotationY
       mesh.scale.setScalar(item.scale)
-      // 选中高亮：外框线（人偶为 Group → 包围盒线框）
-      mesh.userData.highlight?.remove()
-      const hl = selectedId === item.id ? buildBoundsEdges(mesh) : null
-      if (hl) mesh.add(hl)
-      mesh.userData.highlight = hl
     }
     for (const [id, mesh] of [...st.itemMeshes]) {
       if (!keep.has(id)) {
+        disposeObject(mesh)
         st.scene.remove(mesh)
         st.itemMeshes.delete(id)
       }
+    }
+  }, [items, selectedId])
+
+  // —— 选中高亮：独立图层（不进导出画面） ——
+  React.useEffect(() => {
+    const st = stateRef.current
+    if (!st) return
+    st.hlGroup.clear()
+    const mesh = selectedId ? st.itemMeshes.get(selectedId) : null
+    if (mesh) {
+      const hl = buildBoundsEdges(mesh)
+      hl.position.copy(mesh.position)
+      hl.rotation.copy(mesh.rotation)
+      hl.scale.copy(mesh.scale)
+      st.hlGroup.add(hl)
     }
   }, [items, selectedId])
 
@@ -366,14 +404,27 @@ export const PrevisViewport = React.forwardRef<
       const h = ratio >= 1 ? Math.round(MAP_BASE / ratio) : MAP_BASE
       const rt = new THREE.WebGLRenderTarget(w, h)
 
-      const withAspect = <T,>(fn: () => T): T => {
+      // 画幅 + 机位：以 shot.camera 为准渲染（导出图与下游 video_gen 消费一致），
+      // 排除选中高亮图层；异常时恢复相机/画幅/可见性
+      const withCaptureView = <T,>(fn: () => T): T => {
+        const cam = propsRef.current.camera
+        const prevPos = st.camera.position.clone()
+        const prevTarget = st.controls.target.clone()
         const prevAspect = st.camera.aspect
+        st.camera.position.set(...cam.position)
+        st.controls.target.set(...cam.target)
         st.camera.aspect = w / h
         st.camera.updateProjectionMatrix()
-        const out = fn()
-        st.camera.aspect = prevAspect
-        st.camera.updateProjectionMatrix()
-        return out
+        st.hlGroup.visible = false
+        try {
+          return fn()
+        } finally {
+          st.hlGroup.visible = true
+          st.camera.position.copy(prevPos)
+          st.controls.target.copy(prevTarget)
+          st.camera.aspect = prevAspect
+          st.camera.updateProjectionMatrix()
+        }
       }
       const read = (): string => {
         const px = new Uint8Array(w * h * 4)
@@ -394,17 +445,22 @@ export const PrevisViewport = React.forwardRef<
       }
 
       // 预演帧：正常渲染
-      const previewUrl = withAspect(() => {
+      const previewUrl = withCaptureView(() => {
         st.renderer.setRenderTarget(rt)
         st.renderer.render(st.scene, st.camera)
         return read()
       })
 
       // 深度图：overrideMaterial 深度材质 → 灰度反读（近亮远暗）
-      const depthUrl = withAspect(() => {
-        st.scene.overrideMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking })
-        st.renderer.render(st.scene, st.camera)
-        st.scene.overrideMaterial = null
+      const depthUrl = withCaptureView(() => {
+        const depthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking })
+        st.scene.overrideMaterial = depthMat
+        try {
+          st.renderer.render(st.scene, st.camera)
+        } finally {
+          st.scene.overrideMaterial = null
+          depthMat.dispose()
+        }
         const depthPx = new Uint8Array(w * h * 4)
         st.renderer.readRenderTargetPixels(rt, 0, 0, w, h, depthPx)
         const canvas = document.createElement("canvas")
@@ -426,20 +482,29 @@ export const PrevisViewport = React.forwardRef<
       })
 
       // 边缘图：黑底白线（包围盒线框，人偶取整体包围盒）
-      const edgeUrl = withAspect(() => {
+      const edgeUrl = withCaptureView(() => {
         const edgeScene = new THREE.Scene()
         edgeScene.background = new THREE.Color(0x18181b)
+        const disposables: { geometry?: THREE.BufferGeometry; material?: THREE.Material }[] = []
         for (const mesh of st.itemMeshes.values()) {
           const edges = buildBoundsEdges(mesh)
           edges.material = new THREE.LineBasicMaterial({ color: 0xf4f4f5 })
           edges.position.copy(mesh.position)
           edges.rotation.copy(mesh.rotation)
           edges.scale.copy(mesh.scale)
+          disposables.push({ geometry: edges.geometry, material: edges.material })
           edgeScene.add(edges)
         }
-        st.renderer.setRenderTarget(rt)
-        st.renderer.render(edgeScene, st.camera)
-        return read()
+        try {
+          st.renderer.setRenderTarget(rt)
+          st.renderer.render(edgeScene, st.camera)
+          return read()
+        } finally {
+          for (const d of disposables) {
+            d.geometry?.dispose()
+            d.material?.dispose()
+          }
+        }
       })
 
       st.renderer.setRenderTarget(null)
@@ -467,46 +532,52 @@ export const PrevisViewport = React.forwardRef<
       const dist = st.camera.position.distanceTo(tgt)
       const y = st.camera.position.y
       const prevPos = st.camera.position.clone()
+      const prevAspect = st.camera.aspect
       const w = MAP_BASE
       const h = Math.round(MAP_BASE / (16 / 9))
       const rt = new THREE.WebGLRenderTarget(w, h)
-      for (let i = 0; i < count; i++) {
-        const angle = (i / count) * Math.PI * 2
-        st.camera.position.set(tgt.x + Math.cos(angle) * dist, y, tgt.z + Math.sin(angle) * dist)
-        st.camera.lookAt(tgt)
-        st.camera.aspect = w / h
-        st.camera.updateProjectionMatrix()
-        st.renderer.setRenderTarget(rt)
-        st.renderer.render(st.scene, st.camera)
-        const px = new Uint8Array(w * h * 4)
-        st.renderer.readRenderTargetPixels(rt, 0, 0, w, h, px)
-        const canvas = document.createElement("canvas")
-        canvas.width = w
-        canvas.height = h
-        const ctx = canvas.getContext("2d")!
-        const img = ctx.createImageData(w, h)
-        for (let j = 0; j < w * h; j++) {
-          img.data[j * 4] = px[j * 4]
-          img.data[j * 4 + 1] = px[j * 4 + 1]
-          img.data[j * 4 + 2] = px[j * 4 + 2]
-          img.data[j * 4 + 3] = 255
+      st.hlGroup.visible = false
+      try {
+        for (let i = 0; i < count; i++) {
+          const angle = (i / count) * Math.PI * 2
+          st.camera.position.set(tgt.x + Math.cos(angle) * dist, y, tgt.z + Math.sin(angle) * dist)
+          st.camera.lookAt(tgt)
+          st.camera.aspect = w / h
+          st.camera.updateProjectionMatrix()
+          st.renderer.setRenderTarget(rt)
+          st.renderer.render(st.scene, st.camera)
+          const px = new Uint8Array(w * h * 4)
+          st.renderer.readRenderTargetPixels(rt, 0, 0, w, h, px)
+          const canvas = document.createElement("canvas")
+          canvas.width = w
+          canvas.height = h
+          const ctx = canvas.getContext("2d")!
+          const img = ctx.createImageData(w, h)
+          for (let j = 0; j < w * h; j++) {
+            img.data[j * 4] = px[j * 4]
+            img.data[j * 4 + 1] = px[j * 4 + 1]
+            img.data[j * 4 + 2] = px[j * 4 + 2]
+            img.data[j * 4 + 3] = 255
+          }
+          ctx.putImageData(img, 0, 0)
+          out.push({
+            url: canvas.toDataURL("image/png"),
+            camera: {
+              position: [Math.round(st.camera.position.x * 100) / 100, Math.round(st.camera.position.y * 100) / 100, Math.round(st.camera.position.z * 100) / 100],
+              target: [Math.round(tgt.x * 100) / 100, Math.round(tgt.y * 100) / 100, Math.round(tgt.z * 100) / 100],
+              fov: st.camera.fov,
+            },
+          })
         }
-        ctx.putImageData(img, 0, 0)
-        out.push({
-          url: canvas.toDataURL("image/png"),
-          camera: {
-            position: [Math.round(st.camera.position.x * 100) / 100, Math.round(st.camera.position.y * 100) / 100, Math.round(st.camera.position.z * 100) / 100],
-            target: [Math.round(tgt.x * 100) / 100, Math.round(tgt.y * 100) / 100, Math.round(tgt.z * 100) / 100],
-            fov: st.camera.fov,
-          },
-        })
+      } finally {
+        st.hlGroup.visible = true
+        st.camera.position.copy(prevPos)
+        st.camera.lookAt(tgt)
+        st.camera.aspect = prevAspect
+        st.camera.updateProjectionMatrix()
+        st.renderer.setRenderTarget(null)
+        rt.dispose()
       }
-      st.camera.position.copy(prevPos)
-      st.camera.lookAt(tgt)
-      st.camera.aspect = st.renderer.domElement.clientWidth / Math.max(1, st.renderer.domElement.clientHeight)
-      st.camera.updateProjectionMatrix()
-      st.renderer.setRenderTarget(null)
-      rt.dispose()
       return out
     },
   }))

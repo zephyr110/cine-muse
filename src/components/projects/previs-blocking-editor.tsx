@@ -157,13 +157,17 @@ function BlockingShotEditor({
       setItems(shot.blocking)
       setCamera(shot.camera)
       setSelected(null)
+      // 撤销/重做恢复的是纯数据：已导出的位图与瞬态环绕条与当前状态不一致，清空待重新渲染
+      setCaptured(null)
+      setOrbits([])
     }
   }, [propsKey, shot])
 
-  /** 本地编辑态提交到 reducer（产生撤销快照） */
+  /** 本地编辑态提交到 reducer（一次逻辑编辑仅产生一个撤销快照：
+   *   BLOCKING 先推快照（编辑前状态），CAMERA 复用同一快照不重复推） */
   const commit = (nextItems: BlockingItem[], nextCamera: PrevisShot["camera"]) => {
     dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: nextItems, commit: true })
-    dispatch({ type: "UPDATE_PREVIS_CAMERA", projectId, stageId: stage.id, shotIndex, camera: nextCamera, commit: true })
+    dispatch({ type: "UPDATE_PREVIS_CAMERA", projectId, stageId: stage.id, shotIndex, camera: nextCamera, commit: false })
   }
 
   const rendered = renderPrevisShot({ ...shot, blocking: items, camera })
@@ -590,9 +594,13 @@ function BlockingShotEditor({
             if (!clipboard) return
             const copy: BlockingItem = {
               ...clipboard,
-              id: `c-${Date.now().toString(36)}`,
+              id: `c-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
               name: `${clipboard.name} 副本`,
-              position: [clipboard.position[0] + 1, 0, clipboard.position[2] + 1] as [number, number, number],
+              position: [
+                round2(clamp(clipboard.position[0] + 1, X_RANGE)),
+                0,
+                round2(clamp(clipboard.position[2] + 1, Z_RANGE)),
+              ] as [number, number, number],
             }
             const next = [...items, copy]
             setItems(next)
@@ -653,7 +661,20 @@ function BlockingShotEditor({
                     viewFromCamera={viewFromCamera}
                     onSelect={setSelected}
                     onMoveItem={(id, x, z) =>
-                      setItems((prev) => prev.map((b) => (b.id === id ? { ...b, position: [x, 0, z] } : b)))
+                      setItems((prev) =>
+                        prev.map((b) =>
+                          b.id === id
+                            ? {
+                                ...b,
+                                position: [
+                                  round2(clamp(x, X_RANGE)),
+                                  0,
+                                  round2(clamp(z, Z_RANGE)),
+                                ] as [number, number, number],
+                              }
+                            : b,
+                        ),
+                      )
                     }
                   />
                   <FrameOverlay aspect={aspect} />
