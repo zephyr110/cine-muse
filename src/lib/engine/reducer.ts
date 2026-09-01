@@ -165,7 +165,14 @@ function startNextStage(state: AppState, project: Project, now: string): boolean
     const previs = previsStage?.artifact
     if (previs && isPrevisArtifact(previs)) {
       const first = previs.shots[0]
-      next.references = [{ kind: "previs", depthUrl: svgDataUrl(first.depthSvg), edgeUrl: svgDataUrl(first.edgeSvg) }]
+      // 3D 真实导出优先，2D SVG 兜底
+      next.references = [
+        {
+          kind: "previs",
+          depthUrl: first.depthUrl ?? svgDataUrl(first.depthSvg),
+          edgeUrl: first.edgeUrl ?? svgDataUrl(first.edgeSvg),
+        },
+      ]
     }
   }
   next.status = "running"
@@ -504,6 +511,18 @@ export function engineReducer(state: AppState, action: Action): AppState {
         if (!shot) return
         shot.blocking = action.blocking
         Object.assign(shot, renderPrevisShot(shot))
+      })
+
+    case "UPDATE_PREVIS_MAPS":
+      return produce(state, (draft) => {
+        const p = draft.projects.find((x) => x.id === action.projectId)
+        const s = p?.stages.find((x) => x.id === action.stageId)
+        if (!p || !s || !isPrevisArtifact(s.artifact)) return
+        const shot = s.artifact.shots[action.shotIndex]
+        if (!shot) return
+        shot.previewUrl = action.maps.previewUrl
+        shot.depthUrl = action.maps.depthUrl
+        shot.edgeUrl = action.maps.edgeUrl
       })
 
     case "UPDATE_PREVIS_CAMERA":

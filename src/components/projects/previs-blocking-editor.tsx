@@ -1,14 +1,15 @@
 "use client"
 
 import * as React from "react"
-import { CameraIcon, RotateCcwIcon } from "lucide-react"
+import { CameraIcon, EyeIcon, RotateCcwIcon } from "lucide-react"
 
 import { useApp } from "@/lib/store"
-import { injectMarkerIds, renderPrevisShot } from "@/lib/engine/previs-render"
+import { injectMarkerIds, renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { isPrevisArtifact } from "@/lib/engine/previs-types"
 import type { BlockingItem, PrevisShot, WorkflowStage } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { PrevisViewport, type CaptureResult, type PrevisViewportHandle } from "./previs-3d-viewport"
 
 /** 与 previs-render 俯视投影一致：480×270 画布、48px/世界单位（z 向上） */
 const SVG_W = 480
@@ -91,6 +92,10 @@ function BlockingShotEditor({
   const [selected, setSelected] = React.useState<string | null>(null)
   const [dragId, setDragId] = React.useState<string | null>(null)
   const [mapTab, setMapTab] = React.useState<"preview" | "depth" | "edge">("preview")
+  const [centerTab, setCenterTab] = React.useState<"view3d" | "preview" | "depth" | "edge">("view3d")
+  const [captured, setCaptured] = React.useState<CaptureResult | null>(null)
+  const [viewFromCamera, setViewFromCamera] = React.useState(false)
+  const viewportRef = React.useRef<PrevisViewportHandle | null>(null)
   const svgBoxRef = React.useRef<HTMLDivElement | null>(null)
 
   const rendered = renderPrevisShot({ ...shot, blocking: items, camera })
@@ -209,8 +214,16 @@ function BlockingShotEditor({
   const rerender = () => {
     dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: items })
     dispatch({ type: "UPDATE_PREVIS_CAMERA", projectId, stageId: stage.id, shotIndex, camera })
+    // 3D 模式：从场景真实导出三图（深度/边缘为实际几何渲染）
+    if (variant === "fullscreen") {
+      const maps = viewportRef.current?.captureMaps()
+      if (maps?.depthUrl) {
+        dispatch({ type: "UPDATE_PREVIS_MAPS", projectId, stageId: stage.id, shotIndex, maps })
+        setCaptured(maps)
+      }
+    }
     dispatch({ type: "RERENDER_PREVIS", projectId, stageId: stage.id, now: new Date().toISOString() })
-    onDone()
+    if (variant === "inline") onDone()
   }
 
   // —— 布局区块：inline 堆叠、fullscreen 三栏，共用同一交互逻辑 ——
@@ -234,10 +247,12 @@ function BlockingShotEditor({
     />
   )
 
-  const mapTabsEl = (
-    <div className="flex gap-1.5">
+  // 中央工具栏：3D 视图 / 导出三图切换 + 从机位看
+  const centerTabsEl = (
+    <div className="flex items-center gap-1.5">
       {(
         [
+          ["view3d", "3D 视图"],
           ["preview", "布景"],
           ["depth", "深度"],
           ["edge", "边缘"],
@@ -246,17 +261,25 @@ function BlockingShotEditor({
         <button
           key={key}
           type="button"
-          onClick={() => setMapTab(key)}
+          onClick={() => setCenterTab(key)}
           className={cn(
             "rounded-md border px-2 py-1 text-xs transition-colors",
-            mapTab === key
+            centerTab === key
               ? "border-primary/60 bg-primary/10 font-medium"
               : "border-border/60 text-muted-foreground hover:border-primary/30",
           )}
         >
-          {label}图
+          {label}
         </button>
       ))}
+      <Button
+        size="sm"
+        variant="ghost"
+        className={cn("ml-auto gap-1 text-xs", viewFromCamera && "border border-primary/40 bg-primary/5 text-primary")}
+        onClick={() => setViewFromCamera((v) => !v)}
+      >
+        <EyeIcon className="size-3.5" /> 从机位看
+      </Button>
     </div>
   )
 
@@ -376,9 +399,36 @@ function BlockingShotEditor({
           {itemsEl}
         </div>
         <div className="flex min-h-0 flex-col gap-3">
-          {mapTabsEl}
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md bg-muted/20 p-1">
-            {canvasEl}
+          {centerTabsEl}
+          <div className="min-h-0 flex-1 overflow-hidden rounded-md border bg-background">
+            {centerTab === "view3d" ? (
+              <PrevisViewport
+                ref={viewportRef}
+                items={items}
+                camera={camera}
+                selectedId={selected}
+                viewFromCamera={viewFromCamera}
+                onSelect={setSelected}
+                onMoveItem={(id, x, z) =>
+                  setItems((prev) => prev.map((b) => (b.id === id ? { ...b, position: [x, 0, z] } : b)))
+                }
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center bg-muted/20 p-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={
+                    centerTab === "preview"
+                      ? (captured?.previewUrl ?? shot.previewUrl ?? svgDataUrl(previewSvg))
+                      : centerTab === "depth"
+                        ? (captured?.depthUrl ?? shot.depthUrl ?? svgDataUrl(depthSvg))
+                        : (captured?.edgeUrl ?? shot.edgeUrl ?? svgDataUrl(edgeSvg))
+                  }
+                  alt={centerTab === "preview" ? "布景图" : centerTab === "depth" ? "深度图" : "边缘图"}
+                  className="max-h-full max-w-full rounded-md border object-contain"
+                />
+              </div>
+            )}
           </div>
         </div>
         <div className="flex min-h-0 flex-col gap-4 overflow-y-auto pl-1">

@@ -65,6 +65,10 @@ export interface PrevisShot {
   previewSvg: string
   depthSvg: string
   edgeSvg: string
+  /** 3D 编辑器真实导出的位图（PNG dataURL）；存在时优先于 SVG 版本展示/注入 */
+  previewUrl?: string
+  depthUrl?: string
+  edgeUrl?: string
 }
 
 /** 判别联合：previs 专用载荷，与通用 Artifact 平级 */
@@ -323,6 +327,13 @@ export type Action =
     }
   | { type: "UPDATE_ASSET"; assetId: string; patch: Partial<Asset>; now: string }
   | { type: "UPDATE_PREVIS_BLOCKING"; projectId: string; stageId: string; shotIndex: number; blocking: BlockingItem[] }
+  | {
+      type: "UPDATE_PREVIS_MAPS"
+      projectId: string
+      stageId: string
+      shotIndex: number
+      maps: { previewUrl: string; depthUrl: string; edgeUrl: string }
+    }
   | {
       type: "UPDATE_PREVIS_CAMERA"
       projectId: string
