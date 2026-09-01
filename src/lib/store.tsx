@@ -32,7 +32,7 @@ import {
 } from "lucide-react"
 import { toast } from "@/components/ui/toast"
 
-import { createInitialState, engineReducer, STORAGE_KEY } from "@/lib/engine/reducer"
+import { createInitialState, engineReducer, LEGACY_STORAGE_KEY, migrateAppState, STORAGE_KEY } from "@/lib/engine/reducer"
 import { API_URL, apiJson, clearToken, detectApi, getToken, isApiAvailable } from "@/lib/api"
 import type { Action, AppState, EngineEvent, EventKind } from "@/lib/types"
 
@@ -95,6 +95,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false
     async function bootstrap() {
       let raw: string | null = null
+      // 原始数据是否来自 localStorage 回退（迁移回写仅对该源执行）
+      let fromLocalStorage = false
       let server = false
       try {
         server = await detectApi()
@@ -124,8 +126,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             return
           }
         } else {
+          fromLocalStorage = true
           try {
-            raw = window.localStorage.getItem(STORAGE_KEY)
+            // v2 新键优先；无新键时回退 v1 旧键（migrateAppState 迁移后统一回写 v2 并移除旧键）
+            raw = window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_STORAGE_KEY)
           } catch {
             /* 隐私模式：忽略 */
           }
@@ -134,10 +138,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (cancelled) return
       if (raw) {
         try {
+          // v1 → v2 迁移：localStorage / SQLite / 服务端旧数据统一经 migrateAppState 兜底补默认值（幂等）
+          const migrated = migrateAppState(JSON.parse(raw) as AppState)
           prevNewestEvent.current = null // 恢复的事件不视为"新"事件，避免启动 toast 爆发
-          dispatch({ type: "HYDRATE", state: JSON.parse(raw) as AppState })
+          dispatch({ type: "HYDRATE", state: migrated })
           setLoaded(true)
           skipFirstPersist.current = true
+          if (fromLocalStorage) {
+            // 迁移成功：回写 v2 新键并清除 v1 旧键，避免下次启动重复迁移
+            try {
+              window.localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated))
+              window.localStorage.removeItem(LEGACY_STORAGE_KEY)
+            } catch {
+              /* 存储满/隐私模式：静默 */
+            }
+          }
         } catch {
           // 数据损坏：保持种子；loaded=false → 持久化 effect 短路，不回写覆盖本可修复的数据
           setLoaded(false)

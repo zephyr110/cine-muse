@@ -16,6 +16,8 @@ import {
 import { produce } from "immer"
 
 import { createSeedState, uid } from "@/lib/engine/seed"
+import { isPrevisArtifact } from "@/lib/engine/previs-types"
+import { renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { MODE_LABEL } from "@/lib/types"
 import type {
   Action,
@@ -25,7 +27,8 @@ import type {
   WorkflowStage,
 } from "@/lib/types"
 
-export const STORAGE_KEY = "cine-muse-state-v1"
+export const STORAGE_KEY = "cine-muse-state-v2"
+export const LEGACY_STORAGE_KEY = "cine-muse-state-v1"
 
 /**
  * 恢复数据规范化：为旧版本存储补齐缺失字段（顶层与项目/节点级）。
@@ -73,6 +76,26 @@ function normalizeState(s: AppState): AppState {
  * localStorage/SQLite 恢复由 store 的引导 effect 在水合后异步完成并 dispatch HYDRATE。 */
 export function createInitialState(): AppState {
   return createSeedState()
+}
+
+/** v1 → v2：旧数据结构缺少 references 等新字段，直接补默认值即可兼容。
+ * 合并基准为 createInitialState()：旧数据缺顶层字段时回落到种子默认，已有字段原样保留。
+ * 幂等 —— v2 数据再次经过本函数结果不变，可在任意持久化源上安全调用。 */
+export function migrateAppState(raw: unknown): AppState {
+  const s = raw as Partial<AppState> | null
+  return {
+    ...createInitialState(),
+    ...(s ?? {}),
+    projects: (s?.projects ?? []).map((p) => ({
+      ...p,
+      stages: (p.stages ?? []).map((st) => ({
+        ...st,
+        references: st.references ?? undefined,
+        iterations: st.iterations ?? [],
+        reviews: st.reviews ?? [],
+      })),
+    })),
+  } as AppState
 }
 
 const EVT_CAP = 120
@@ -132,6 +155,19 @@ function recomputeProject(p: Project, now: string): Project {
 function startNextStage(state: AppState, project: Project, now: string): boolean {
   const next = project.stages.find((s) => s.status === "pending")
   if (!next) return false
+  // previs 参考附件注入：启动视频生成时，从上游已完成的 previs 产物提取深度/边缘图。
+  // approved 同样视为可用 —— review/manual 模式下人工确认节点以「approved」收尾（见 APPROVE_STAGE），
+  // 若只认 completed，星尘余晖等 demo 的 previs 附件在人工确认后永远无法注入。
+  if (next.agentId === "video_gen") {
+    const previsStage = project.stages.find(
+      (s) => s.agentId === "previs" && isPrevisArtifact(s.artifact) && ["completed", "approved"].includes(s.status),
+    )
+    const previs = previsStage?.artifact
+    if (previs && isPrevisArtifact(previs)) {
+      const first = previs.shots[0]
+      next.references = [{ kind: "previs", depthUrl: svgDataUrl(first.depthSvg), edgeUrl: svgDataUrl(first.edgeSvg) }]
+    }
+  }
   next.status = "running"
   next.progress = 0
   next.startedAt = now
@@ -457,6 +493,47 @@ export function engineReducer(state: AppState, action: Action): AppState {
           }
         }
         pushEvent(draft, p, "mode_changed", `「${p.title}」干预模式已切换为 ${MODE_LABEL[action.mode]}`, action.now)
+      })
+
+    case "UPDATE_PREVIS_BLOCKING":
+      return produce(state, (draft) => {
+        const p = draft.projects.find((x) => x.id === action.projectId)
+        const s = p?.stages.find((x) => x.id === action.stageId)
+        if (!p || !s || !isPrevisArtifact(s.artifact)) return
+        const shot = s.artifact.shots[action.shotIndex]
+        if (!shot) return
+        shot.blocking = action.blocking
+        Object.assign(shot, renderPrevisShot(shot))
+      })
+
+    case "UPDATE_PREVIS_CAMERA":
+      return produce(state, (draft) => {
+        const p = draft.projects.find((x) => x.id === action.projectId)
+        const s = p?.stages.find((x) => x.id === action.stageId)
+        if (!p || !s || !isPrevisArtifact(s.artifact)) return
+        const shot = s.artifact.shots[action.shotIndex]
+        if (!shot) return
+        shot.camera = action.camera
+        Object.assign(shot, renderPrevisShot(shot))
+      })
+
+    case "RERENDER_PREVIS":
+      return produce(state, (draft) => {
+        const p = draft.projects.find((x) => x.id === action.projectId)
+        const s = p?.stages.find((x) => x.id === action.stageId)
+        if (!p || !s || !isPrevisArtifact(s.artifact)) return
+        // isPrevisArtifact 收窄为 Artifact & PrevisArtifact（shots 冲突），用 Object.assign 规避属性写入
+        const shots = s.artifact.shots.map((shot) => renderPrevisShot(shot))
+        Object.assign(s.artifact, { shots })
+        // 重新评估空间一致性（spec §6：修改后「重新渲染」= 三图即时更新 + 重新评估）。
+        // 与 finalizeStage 同构：以本轮迭代次数 + 现存资产绑定重算评估并重置审查人
+        const bindings: BoundAsset[] = p.assets.flatMap((b) => {
+          const asset = draft.assets.find((x) => x.id === b.assetId)
+          return asset ? [{ assetId: b.assetId, role: b.role, category: asset.category }] : []
+        })
+        const assessment = simulateAssessment(s, action.now, s.iterations.length, bindings)
+        assessment.reviewer = s.gateAgentName
+        s.assessment = assessment
       })
 
     case "EDIT_ARTIFACT":

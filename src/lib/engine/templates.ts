@@ -13,9 +13,12 @@ import type {
   ArtifactKind,
   AssetCategory,
   NewProjectInput,
+  PrevisArtifact,
   QualityAssessment,
   WorkflowStage,
 } from "@/lib/types"
+import { makePrevisShot } from "./previs-types"
+import { renderPrevisShot } from "./previs-render"
 
 /** 已解析类别的绑定资产（由 reducer 从资产库实体展开） */
 export interface BoundAsset {
@@ -43,6 +46,7 @@ export interface BoostSlot {
   description: string
   after?: string
   before?: string
+  checkpoint?: boolean
   gateAgent?: string
   artifactKind: ArtifactKind
 }
@@ -85,6 +89,14 @@ export const BOOST_SLOTS: BoostSlot[] = [
     after: "video_gen",
     gateAgent: "视觉质检",
     artifactKind: "video",
+  },
+  {
+    agentId: "previs",
+    title: "空间预演台",
+    description: "分镜驱动场景摆位与机位规划，渲染深度/边缘图作为视频生成参考附件",
+    before: "video_gen",
+    checkpoint: true,
+    artifactKind: "previs",
   },
 ]
 
@@ -174,8 +186,8 @@ export function buildStages(input: NewProjectInput): WorkflowStage[] {
     const beforeIdx = b.before ? stages.findIndex((t) => t.agentId === b.before) : -1
     const afterIdx = b.after ? stages.findIndex((t) => t.agentId === b.after) : -1
     const idx = beforeIdx >= 0 ? beforeIdx : afterIdx >= 0 ? afterIdx + 1 : -1
-    const { agentId, title, description, gateAgent, artifactKind } = b
-    stages.splice(idx < 0 ? stages.length : idx, 0, { agentId, title, description, gateAgent, artifactKind })
+    const { agentId, title, description, gateAgent, artifactKind, checkpoint } = b
+    stages.splice(idx < 0 ? stages.length : idx, 0, { agentId, title, description, gateAgent, artifactKind, checkpoint })
   }
   return stages.map((t, i) => ({
     id: `stg-${i}-${t.agentId}`,
@@ -216,7 +228,7 @@ export const GENRE_LIBRARY: Record<string, string> = {
   战争: "宏大叙事下的个体视角",
 }
 
-const STAGE_CONTENT: Record<string, (p: NewProjectInput) => Artifact> = {
+const STAGE_CONTENT: Record<string, (p: NewProjectInput) => Artifact | PrevisArtifact> = {
   screenplay: (p) => ({
     kind: "script",
     title: `${p.title} · 剧本全稿`,
@@ -251,6 +263,16 @@ const STAGE_CONTENT: Record<string, (p: NewProjectInput) => Artifact> = {
       "S12  全景  固定         片尾定帧，字幕区预留",
     ].join("\n"),
   }),
+  previs: (p) => {
+    const shotCount = Math.max(2, Math.min(4, Math.ceil((p.durationSec ?? 0) / 30)))
+    return {
+      kind: "previs",
+      title: `${p.title} · 空间预演`,
+      summary: `${shotCount} 镜头 · 布景/深度/边缘三图`,
+      content: `已按分镜生成 ${shotCount} 镜头空间摆位与机位规划`,
+      shots: Array.from({ length: shotCount }, (_, i) => renderPrevisShot(makePrevisShot(i))),
+    }
+  },
   style_design: (p) => ({
     kind: "style_guide",
     title: `${p.title} · 视觉风格指南`,
@@ -358,7 +380,9 @@ export function buildArtifact(
       content: `已生成${context}`,
     }
   }
-  const artifact = gen(input)
+  // previs 载荷（shots: PrevisShot[]）与通用 Artifact 平级，此处收窄为 Artifact 落库，
+  // 读取端经 isPrevisArtifact 判别（见 previs-types.ts）
+  const artifact = gen(input) as Artifact
   return context && artifact.content
     ? { ...artifact, content: `${artifact.content}${context}` }
     : artifact
@@ -413,6 +437,7 @@ export const METRIC_BY_AGENT: Record<string, { key: string; label: string }[]> =
     { key: "stability", label: "画面稳定性" },
     { key: "match", label: "语义匹配度" },
     { key: "continuity", label: "跨镜头一致性" },
+    { key: "spatial", label: "空间一致性" },
   ],
 }
 
@@ -436,15 +461,21 @@ export function simulateAssessment(
   const categories = AGENT_ASSET_CATEGORIES[stage.agentId]
   const hasAsset = boost ? bindings.some((b) => categories?.includes(b.category)) : false
   const assetLift = boost && hasAsset ? boost.score : 0
+  // previs 参考附件：空间几何锚点 → 分数与空间一致性指标加成
+  const hasPrevisRef = stage.references?.some((r) => r.kind === "previs")
+  const previsLift = hasPrevisRef ? 5 : 0
   const base = 66 + Math.random() * 26 // 66-92
   // 首轮 ±浮动使门禁失败可达（触发修复流程）；迭代轮显著回升，必然通过
   const lift = iteratingRound > 0 ? 8 + iteratingRound * 4 + Math.random() * 6 : Math.random() * 16 - 6
-  const score = Math.min(97, Math.round(base + lift + assetLift))
+  const score = Math.min(97, Math.round(base + lift + assetLift + previsLift))
   const metrics = (METRIC_BY_AGENT[stage.agentId] ?? []).map((m) => ({
     ...m,
     value: Math.max(
       45,
-      Math.min(99, Math.round(score + (Math.random() * 14 - 7) + (boost && m.key === boost.metric ? 6 : 0))),
+      Math.min(
+        99,
+        Math.round(score + (Math.random() * 14 - 7) + (boost && m.key === boost.metric ? 6 : 0) + (m.key === "spatial" && hasPrevisRef ? 10 : 0)),
+      ),
     ),
   }))
   return {
