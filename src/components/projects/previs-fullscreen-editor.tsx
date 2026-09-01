@@ -5,7 +5,7 @@ import { Maximize2Icon, XIcon } from "lucide-react"
 
 import type { WorkflowStage } from "@/lib/types"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogOverlay, DialogPortal } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { PrevisBlockingEditor } from "./previs-blocking-editor"
 
 /**
@@ -26,34 +26,32 @@ export function PrevisFullscreenEditor({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogPortal>
-        <DialogOverlay className="bg-black/40 backdrop-blur-sm" />
-        <DialogContent
-          showCloseButton={false}
-          className="fixed inset-0 z-50 flex max-w-none flex-col gap-0 rounded-none border-0 bg-background p-0 sm:max-w-none"
-        >
-          {/* 顶栏：身份信息 + 退出 */}
-          <header className="flex h-12 shrink-0 items-center gap-2.5 border-b bg-popover px-4">
-            <Maximize2Icon className="size-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">空间预演台 · 全屏编辑</h2>
-            <span className="truncate text-xs text-muted-foreground">{stage.title}</span>
-            <div className="ml-auto" />
-            <Button size="sm" variant="ghost" className="gap-1" onClick={onClose}>
-              <XIcon className="size-3.5" /> 退出编辑
-            </Button>
-          </header>
-          <div className="min-h-0 flex-1 p-4">
-            <PrevisBlockingEditor
-              projectId={projectId}
-              stage={stage}
-              shotIndex={shotIndex}
-              onShotIndexChange={setShotIndex}
-              onDone={onClose}
-              variant="fullscreen"
-            />
-          </div>
-        </DialogContent>
-      </DialogPortal>
+      {/* DialogContent 自带 portal + overlay；全屏覆盖需中和基类居中 translate */}
+      <DialogContent
+        showCloseButton={false}
+        className="fixed inset-0 z-50 flex max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none border-0 bg-background p-0 sm:max-w-none"
+      >
+        {/* 顶栏：身份信息 + 退出 */}
+        <header className="flex h-12 shrink-0 items-center gap-2.5 border-b bg-popover px-4">
+          <Maximize2Icon className="size-4 text-muted-foreground" />
+          <DialogTitle className="text-sm font-semibold">空间预演台 · 全屏编辑</DialogTitle>
+          <span className="truncate text-xs text-muted-foreground">{stage.title}</span>
+          <div className="ml-auto" />
+          <Button size="sm" variant="ghost" className="gap-1" onClick={onClose}>
+            <XIcon className="size-3.5" /> 退出编辑
+          </Button>
+        </header>
+        <div className="min-h-0 flex-1 p-4">
+          <PrevisBlockingEditor
+            projectId={projectId}
+            stage={stage}
+            shotIndex={shotIndex}
+            onShotIndexChange={setShotIndex}
+            onDone={onClose}
+            variant="fullscreen"
+          />
+        </div>
+      </DialogContent>
     </Dialog>
   )
 }

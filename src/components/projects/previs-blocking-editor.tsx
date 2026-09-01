@@ -106,7 +106,7 @@ function BlockingShotEditor({
       if (el.getAttribute("data-bid") === selected) el.setAttribute("data-selected", "")
       else el.removeAttribute("data-selected")
     }
-  }, [previewSvg, selected])
+  }, [previewSvg, selected, mapTab])
 
   const draggable = items.filter((b) => b.kind !== "terrain")
 
@@ -172,7 +172,7 @@ function BlockingShotEditor({
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!selected) return
+    if (!selected || mapTab !== "preview") return
     const step = e.shiftKey ? 0.1 : 0.5
     const deltas: Record<string, [number, number]> = {
       ArrowLeft: [-step, 0],
@@ -210,6 +210,7 @@ function BlockingShotEditor({
   const canvasEl = (
     <div
       ref={svgBoxRef}
+      id="previs-canvas"
       tabIndex={0}
       role="application"
       aria-label="布景俯视图编辑：拖拽角色/道具标记，或选中后用方向键微调"
@@ -220,8 +221,8 @@ function BlockingShotEditor({
       onKeyDown={onKeyDown}
       dangerouslySetInnerHTML={{ __html: mapTab === "preview" ? previewSvg : mapTab === "depth" ? depthSvg : edgeSvg }}
       className={cn(
-        "w-full cursor-move rounded-md border bg-background select-none touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        variant === "fullscreen" ? "h-full" : "aspect-video",
+        "aspect-video w-full max-w-full cursor-move rounded-md border bg-background select-none touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        variant === "fullscreen" && "max-h-full",
       )}
     />
   )
@@ -254,7 +255,9 @@ function BlockingShotEditor({
 
   const itemsEl = (
     <div className="flex flex-col gap-1">
-      <p className="text-[11px] font-medium text-muted-foreground">布景项（点击选中，方向键微调）</p>
+      {variant === "fullscreen" && (
+        <p className="text-[11px] font-medium text-muted-foreground">布景项（点击选中，方向键微调）</p>
+      )}
       {draggable.length > 0 ? (
         draggable.map((b) => (
           <div
@@ -288,9 +291,9 @@ function BlockingShotEditor({
             </label>
           </div>
         ))
-      ) : (
+      ) : variant === "fullscreen" ? (
         <p className="text-[11px] text-muted-foreground">无可拖拽的布景项</p>
-      )}
+      ) : null}
     </div>
   )
 
@@ -352,7 +355,9 @@ function BlockingShotEditor({
     </div>
   )
 
-  const styleEl = <style>{`[data-bid]{cursor:grab}[data-bid][data-selected]{stroke:#dc2626;stroke-width:3}`}</style>
+  const styleEl = (
+    <style>{`[data-bid]{cursor:grab}[data-bid][data-selected]{stroke:#dc2626;stroke-width:3}#previs-canvas svg{width:100%!important;height:100%!important;display:block}`}</style>
+  )
 
   if (variant === "fullscreen") {
     return (
@@ -365,7 +370,9 @@ function BlockingShotEditor({
         </div>
         <div className="flex min-h-0 flex-col gap-3">
           {mapTabsEl}
-          <div className="min-h-0 flex-1 rounded-md bg-muted/20 p-1">{canvasEl}</div>
+          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md bg-muted/20 p-1">
+            {canvasEl}
+          </div>
         </div>
         <div className="flex min-h-0 flex-col gap-4 overflow-y-auto pl-1">
           {cameraEl}
