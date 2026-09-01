@@ -4,11 +4,13 @@ import * as React from "react"
 import * as THREE from "three"
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 
+import { BODY_TYPE_BY_ID, POSE_PRESET_BY_ID, type JointName } from "@/lib/engine/previs-poses"
 import type { BlockingItem, PrevisShot } from "@/lib/types"
 
-/** 导出图分辨率（与 2D SVG 一致 16:9） */
-const MAP_W = 480
-const MAP_H = 270
+/** 导出图基准分辨率（按画幅比例派生宽高） */
+const MAP_BASE = 480
+const ASPECT_RATIOS = { "16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1 } as const
+export type MapAspect = keyof typeof ASPECT_RATIOS
 
 const ITEM_COLOR: Record<BlockingItem["kind"], number> = {
   terrain: 0x9ca3af,
@@ -16,13 +18,98 @@ const ITEM_COLOR: Record<BlockingItem["kind"], number> = {
   prop: 0xf59e0b,
 }
 
-/** 图元 → 3D 网格：地形=薄板，角色=胶囊，道具=方体 */
+const DEG = Math.PI / 180
+
+/** 程序化人偶：躯干/头/四肢胶囊，按体型比例 + 关节角度（controls 度）摆位 */
+function buildMannequin(item: BlockingItem): THREE.Group {
+  const g = new THREE.Group()
+  const mat = new THREE.MeshLambertMaterial({ color: ITEM_COLOR.character })
+  const body = BODY_TYPE_BY_ID[item.bodyType ?? "standard"]
+  const controls = item.controls ?? POSE_PRESET_BY_ID[item.poseId ?? "stand"]?.controls ?? {}
+  const h = body?.height ?? 1.8
+  const w = body?.width ?? 1
+  const hs = (body?.headSize ?? 0.34) / 2
+
+  const limb = (len: number, rad: number, pivot: [number, number, number], joint: JointName): THREE.Object3D => {
+    const holder = new THREE.Group()
+    holder.position.set(...pivot)
+    const [rx, ry, rz] = controls[joint] ?? [0, 0, 0]
+    holder.rotation.set(rx * DEG, ry * DEG, rz * DEG)
+    const seg = new THREE.Mesh(new THREE.CapsuleGeometry(rad, Math.max(0.05, len - rad * 2), 3, 10), mat)
+    seg.position.y = -len / 2
+    holder.add(seg)
+    return holder
+  }
+
+  // 躯干（含朝向锥体由父级提供；这里加手臂挂点）
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.32 * w, h * 0.32, 3, 12), mat)
+  torso.position.y = h * 0.42
+  const [tx, ty, tz] = controls.torso ?? [0, 0, 0]
+  torso.rotation.set(tx * DEG, ty * DEG, tz * DEG)
+  g.add(torso)
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(hs, 16, 12), mat)
+  head.position.y = h * 0.76
+  const [hx, hy, hz] = controls.head ?? [0, 0, 0]
+  head.rotation.set(hx * DEG, hy * DEG, hz * DEG)
+  g.add(head)
+
+  const armLen = h * 0.36
+  const armRad = 0.11 * w
+  g.add(limb(armLen, armRad, [-0.36 * w, h * 0.62, 0], "armL"))
+  g.add(limb(armLen, armRad, [0.36 * w, h * 0.62, 0], "armR"))
+  const legLen = h * 0.4
+  const legRad = 0.14 * w
+  g.add(limb(legLen, legRad, [-0.16 * w, h * 0.34, 0], "legL"))
+  g.add(limb(legLen, legRad, [0.16 * w, h * 0.34, 0], "legR"))
+
+  // 朝向箭头
+  const arrow = new THREE.Mesh(
+    new THREE.ConeGeometry(0.15, 0.3, 8),
+    new THREE.MeshLambertMaterial({ color: 0xffffff }),
+  )
+  arrow.position.y = h * 0.95
+  arrow.rotation.x = Math.PI / 2
+  g.add(arrow)
+
+  return g
+}
+
+/** 包围盒线框（选中高亮与边缘导出共用）：Group 取整体包围盒，Mesh 直接取几何边 */
+function buildBoundsEdges(obj: THREE.Object3D): THREE.LineSegments {
+  let box: THREE.Box3
+  if (obj instanceof THREE.Group) {
+    box = new THREE.Box3().setFromObject(obj)
+    const size = box.getSize(new THREE.Vector3())
+    const center = box.getCenter(new THREE.Vector3())
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(size.x + 0.12, size.y + 0.12, size.z + 0.12)),
+      new THREE.LineBasicMaterial({ color: 0xdc2626 }),
+    )
+    edges.position.copy(center)
+    return edges
+  }
+  box = new THREE.Box3().setFromObject(obj)
+  return new THREE.LineSegments(
+    new THREE.EdgesGeometry((obj as THREE.Mesh).geometry),
+    new THREE.LineBasicMaterial({ color: 0xdc2626 }),
+  )
+}
+
+/** 图元 → 3D 网格：地形=薄板，角色=程序化人偶，道具=方体 */
 function buildMesh(item: BlockingItem): THREE.Object3D {
+  if (item.kind === "character") {
+    const g = buildMannequin(item)
+    g.userData.itemId = item.id
+    const [x, , z] = item.position
+    g.position.set(x, 0, z)
+    g.rotation.y = item.rotationY
+    g.scale.setScalar(item.scale)
+    return g
+  }
   let geo: THREE.BufferGeometry
   if (item.kind === "terrain") {
     geo = new THREE.BoxGeometry(3, 0.2, 3)
-  } else if (item.kind === "character") {
-    geo = new THREE.CapsuleGeometry(0.4, 1, 4, 12)
   } else {
     geo = new THREE.BoxGeometry(0.7, 0.7, 0.7)
   }
@@ -33,16 +120,6 @@ function buildMesh(item: BlockingItem): THREE.Object3D {
   mesh.position.set(x, y + (item.kind === "terrain" ? 0 : 1), z)
   mesh.rotation.y = item.rotationY
   mesh.scale.setScalar(item.scale)
-  // 角色朝向箭头（顶部小锥体）
-  if (item.kind === "character") {
-    const arrow = new THREE.Mesh(
-      new THREE.ConeGeometry(0.15, 0.3, 8),
-      new THREE.MeshLambertMaterial({ color: 0xffffff }),
-    )
-    arrow.position.y = 1.6
-    arrow.rotation.x = Math.PI / 2
-    mesh.add(arrow)
-  }
   return mesh
 }
 
@@ -52,8 +129,18 @@ export interface CaptureResult {
   edgeUrl: string
 }
 
+export interface OrbitPreview {
+  url: string
+  camera: PrevisShot["camera"]
+}
+
 export interface PrevisViewportHandle {
-  captureMaps: () => CaptureResult
+  /** 按画幅比例真实导出三图 */
+  captureMaps: (aspect?: MapAspect) => CaptureResult
+  /** 当前环绕视角（导演视角）的机位读数 */
+  getViewCamera: () => PrevisShot["camera"]
+  /** 环绕目标一圈拍摄 count 张预览（瞬态，不持久化） */
+  captureOrbitPreviews: (count: number) => OrbitPreview[]
 }
 
 /**
@@ -190,14 +277,11 @@ export const PrevisViewport = React.forwardRef<
       mesh.position.set(x, y + (item.kind === "terrain" ? 0 : 1), z)
       mesh.rotation.y = item.rotationY
       mesh.scale.setScalar(item.scale)
-      // 选中高亮：外框线
+      // 选中高亮：外框线（人偶为 Group → 包围盒线框）
       mesh.userData.highlight?.remove()
-      const hl = new THREE.LineSegments(
-        new THREE.EdgesGeometry((mesh as THREE.Mesh).geometry),
-        new THREE.LineBasicMaterial({ color: 0xdc2626 }),
-      )
-      if (selectedId === item.id) mesh.add(hl)
-      mesh.userData.highlight = selectedId === item.id ? hl : null
+      const hl = selectedId === item.id ? buildBoundsEdges(mesh) : null
+      if (hl) mesh.add(hl)
+      mesh.userData.highlight = hl
     }
     for (const [id, mesh] of [...st.itemMeshes]) {
       if (!keep.has(id)) {
@@ -272,21 +356,34 @@ export const PrevisViewport = React.forwardRef<
     if (st.renderer.domElement.hasPointerCapture(e.pointerId)) st.renderer.domElement.releasePointerCapture(e.pointerId)
   }
 
-  // —— 真实导出：深度（RGBADepthPacking 反读）/ 边缘（EdgesGeometry 线框）/ 预演帧 ——
+  // —— 真实导出：预演帧 / 深度（RGBADepthPacking 反读）/ 边缘（包围盒线框）· 按画幅 ——
   React.useImperativeHandle(ref, () => ({
-    captureMaps: () => {
+    captureMaps: (aspect: MapAspect = "16:9") => {
       const st = stateRef.current
       if (!st) return { previewUrl: "", depthUrl: "", edgeUrl: "" }
-      const rt = new THREE.WebGLRenderTarget(MAP_W, MAP_H)
+      const ratio = ASPECT_RATIOS[aspect]
+      const w = ratio >= 1 ? MAP_BASE : Math.round(MAP_BASE * ratio)
+      const h = ratio >= 1 ? Math.round(MAP_BASE / ratio) : MAP_BASE
+      const rt = new THREE.WebGLRenderTarget(w, h)
+
+      const withAspect = <T,>(fn: () => T): T => {
+        const prevAspect = st.camera.aspect
+        st.camera.aspect = w / h
+        st.camera.updateProjectionMatrix()
+        const out = fn()
+        st.camera.aspect = prevAspect
+        st.camera.updateProjectionMatrix()
+        return out
+      }
       const read = (): string => {
-        const px = new Uint8Array(MAP_W * MAP_H * 4)
-        st.renderer.readRenderTargetPixels(rt, 0, 0, MAP_W, MAP_H, px)
+        const px = new Uint8Array(w * h * 4)
+        st.renderer.readRenderTargetPixels(rt, 0, 0, w, h, px)
         const canvas = document.createElement("canvas")
-        canvas.width = MAP_W
-        canvas.height = MAP_H
+        canvas.width = w
+        canvas.height = h
         const ctx = canvas.getContext("2d")!
-        const img = ctx.createImageData(MAP_W, MAP_H)
-        for (let i = 0; i < MAP_W * MAP_H; i++) {
+        const img = ctx.createImageData(w, h)
+        for (let i = 0; i < w * h; i++) {
           img.data[i * 4] = px[i * 4]
           img.data[i * 4 + 1] = px[i * 4 + 1]
           img.data[i * 4 + 2] = px[i * 4 + 2]
@@ -297,53 +394,120 @@ export const PrevisViewport = React.forwardRef<
       }
 
       // 预演帧：正常渲染
-      st.renderer.setRenderTarget(rt)
-      st.renderer.render(st.scene, st.camera)
-      const previewUrl = read()
+      const previewUrl = withAspect(() => {
+        st.renderer.setRenderTarget(rt)
+        st.renderer.render(st.scene, st.camera)
+        return read()
+      })
 
       // 深度图：overrideMaterial 深度材质 → 灰度反读（近亮远暗）
-      st.scene.overrideMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking })
-      st.renderer.render(st.scene, st.camera)
-      st.scene.overrideMaterial = null
-      const depthPx = new Uint8Array(MAP_W * MAP_H * 4)
-      st.renderer.readRenderTargetPixels(rt, 0, 0, MAP_W, MAP_H, depthPx)
-      const depthCanvas = document.createElement("canvas")
-      depthCanvas.width = MAP_W
-      depthCanvas.height = MAP_H
-      const dctx = depthCanvas.getContext("2d")!
-      const dimg = dctx.createImageData(MAP_W, MAP_H)
-      for (let i = 0; i < MAP_W * MAP_H; i++) {
-        const o = i * 4
-        const depth = (depthPx[o] + depthPx[o + 1] / 255 + depthPx[o + 2] / 65025) / 255
-        const g = Math.round(240 - Math.min(1, depth) * 200)
-        dimg.data[o] = g
-        dimg.data[o + 1] = g
-        dimg.data[o + 2] = g
-        dimg.data[o + 3] = 255
-      }
-      dctx.putImageData(dimg, 0, 0)
-      const depthUrl = depthCanvas.toDataURL("image/png")
+      const depthUrl = withAspect(() => {
+        st.scene.overrideMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking })
+        st.renderer.render(st.scene, st.camera)
+        st.scene.overrideMaterial = null
+        const depthPx = new Uint8Array(w * h * 4)
+        st.renderer.readRenderTargetPixels(rt, 0, 0, w, h, depthPx)
+        const canvas = document.createElement("canvas")
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext("2d")!
+        const img = ctx.createImageData(w, h)
+        for (let i = 0; i < w * h; i++) {
+          const o = i * 4
+          const depth = (depthPx[o] + depthPx[o + 1] / 255 + depthPx[o + 2] / 65025) / 255
+          const g = Math.round(240 - Math.min(1, depth) * 200)
+          img.data[o] = g
+          img.data[o + 1] = g
+          img.data[o + 2] = g
+          img.data[o + 3] = 255
+        }
+        ctx.putImageData(img, 0, 0)
+        return canvas.toDataURL("image/png")
+      })
 
-      // 边缘图：黑底白线（EdgesGeometry）
-      const edgeScene = new THREE.Scene()
-      edgeScene.background = new THREE.Color(0x18181b)
-      for (const mesh of st.itemMeshes.values()) {
-        const edges = new THREE.LineSegments(
-          new THREE.EdgesGeometry((mesh as THREE.Mesh).geometry, 15),
-          new THREE.LineBasicMaterial({ color: 0xf4f4f5 }),
-        )
-        edges.position.copy(mesh.position)
-        edges.rotation.copy(mesh.rotation)
-        edges.scale.copy(mesh.scale)
-        edgeScene.add(edges)
-      }
-      st.renderer.setRenderTarget(rt)
-      st.renderer.render(edgeScene, st.camera)
-      const edgeUrl = read()
+      // 边缘图：黑底白线（包围盒线框，人偶取整体包围盒）
+      const edgeUrl = withAspect(() => {
+        const edgeScene = new THREE.Scene()
+        edgeScene.background = new THREE.Color(0x18181b)
+        for (const mesh of st.itemMeshes.values()) {
+          const edges = buildBoundsEdges(mesh)
+          edges.material = new THREE.LineBasicMaterial({ color: 0xf4f4f5 })
+          edges.position.copy(mesh.position)
+          edges.rotation.copy(mesh.rotation)
+          edges.scale.copy(mesh.scale)
+          edgeScene.add(edges)
+        }
+        st.renderer.setRenderTarget(rt)
+        st.renderer.render(edgeScene, st.camera)
+        return read()
+      })
 
       st.renderer.setRenderTarget(null)
       rt.dispose()
       return { previewUrl, depthUrl, edgeUrl }
+    },
+
+    getViewCamera: () => {
+      const st = stateRef.current
+      if (!st) return { position: [0, 2, 8], target: [0, 1, 0], fov: 45 }
+      const pos = st.camera.position
+      const tgt = st.controls.target
+      return {
+        position: [Math.round(pos.x * 100) / 100, Math.round(pos.y * 100) / 100, Math.round(pos.z * 100) / 100],
+        target: [Math.round(tgt.x * 100) / 100, Math.round(tgt.y * 100) / 100, Math.round(tgt.z * 100) / 100],
+        fov: st.camera.fov,
+      }
+    },
+
+    captureOrbitPreviews: (count: number) => {
+      const st = stateRef.current
+      if (!st) return []
+      const out: OrbitPreview[] = []
+      const tgt = st.controls.target
+      const dist = st.camera.position.distanceTo(tgt)
+      const y = st.camera.position.y
+      const prevPos = st.camera.position.clone()
+      const w = MAP_BASE
+      const h = Math.round(MAP_BASE / (16 / 9))
+      const rt = new THREE.WebGLRenderTarget(w, h)
+      for (let i = 0; i < count; i++) {
+        const angle = (i / count) * Math.PI * 2
+        st.camera.position.set(tgt.x + Math.cos(angle) * dist, y, tgt.z + Math.sin(angle) * dist)
+        st.camera.lookAt(tgt)
+        st.camera.aspect = w / h
+        st.camera.updateProjectionMatrix()
+        st.renderer.setRenderTarget(rt)
+        st.renderer.render(st.scene, st.camera)
+        const px = new Uint8Array(w * h * 4)
+        st.renderer.readRenderTargetPixels(rt, 0, 0, w, h, px)
+        const canvas = document.createElement("canvas")
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext("2d")!
+        const img = ctx.createImageData(w, h)
+        for (let j = 0; j < w * h; j++) {
+          img.data[j * 4] = px[j * 4]
+          img.data[j * 4 + 1] = px[j * 4 + 1]
+          img.data[j * 4 + 2] = px[j * 4 + 2]
+          img.data[j * 4 + 3] = 255
+        }
+        ctx.putImageData(img, 0, 0)
+        out.push({
+          url: canvas.toDataURL("image/png"),
+          camera: {
+            position: [Math.round(st.camera.position.x * 100) / 100, Math.round(st.camera.position.y * 100) / 100, Math.round(st.camera.position.z * 100) / 100],
+            target: [Math.round(tgt.x * 100) / 100, Math.round(tgt.y * 100) / 100, Math.round(tgt.z * 100) / 100],
+            fov: st.camera.fov,
+          },
+        })
+      }
+      st.camera.position.copy(prevPos)
+      st.camera.lookAt(tgt)
+      st.camera.aspect = st.renderer.domElement.clientWidth / Math.max(1, st.renderer.domElement.clientHeight)
+      st.camera.updateProjectionMatrix()
+      st.renderer.setRenderTarget(null)
+      rt.dispose()
+      return out
     },
   }))
 
