@@ -4,9 +4,9 @@ import { makePrevisShot } from "./previs-types"
 import { renderPrevisShot } from "./previs-render"
 import type { AppState, Artifact, PrevisShot } from "@/lib/types"
 
-/** 构造含 previs 产物（首镜已渲染三图）的项目状态：stages[0] 替换为 previs 环节 */
-function stateWithPrevis(): AppState {
-  const shot = renderPrevisShot(makePrevisShot(0))
+/** 构造含 previs 产物（首镜已渲染三图，rendered=false 时为未渲染空镜头）的项目状态：stages[0] 替换为 previs 环节 */
+function stateWithPrevis(rendered = true): AppState {
+  const shot = rendered ? renderPrevisShot(makePrevisShot(0)) : makePrevisShot(0)
   // PrevisArtifact.shots 与 Artifact.shots?: number 冲突，工件放入 stage 时按 Artifact 边界收窄
   // （引擎内通过 isPrevisArtifact 运行时判别恢复 previs 语义）
   const artifact = { kind: "previs" as const, title: "t", summary: "", shots: [shot] } as unknown as Artifact
@@ -47,12 +47,34 @@ describe("previs reducer", () => {
     expect(out.previewSvg).toContain("<svg")
   })
 
-  it("RERENDER_PREVIS 重新生成三图", () => {
+  it("RERENDER_PREVIS 对未渲染镜头重新生成三图", () => {
+    const state = stateWithPrevis(false) // 未渲染镜头：三图 svg 为空串
+    const p = state.projects[0]
+    const stg = p.stages[0]
+    expect(shotsOf(state)[0].previewSvg).toBe("")
+    const next = engineReducer(state, {
+      type: "RERENDER_PREVIS", projectId: p.id, stageId: stg.id, now: "2026-09-01T00:00:00.000Z",
+    })
+    const out = shotsOf(next)[0]
+    expect(out.previewSvg).toContain("<svg")
+    expect(out.depthSvg).toContain("<svg")
+    expect(out.edgeSvg).toContain("<svg")
+  })
+
+  it("RERENDER_PREVIS 重渲染后重新评估空间一致性", () => {
     const state = stateWithPrevis()
     const p = state.projects[0]
     const stg = p.stages[0]
-    const next = engineReducer(state, { type: "RERENDER_PREVIS", projectId: p.id, stageId: stg.id })
-    expect(next.projects[0].stages[0].artifact).toBeDefined()
+    stg.assessment = { score: 1, confidence: 1, feedback: "旧评估（应被重算替换）", metrics: [] }
+    const next = engineReducer(state, {
+      type: "RERENDER_PREVIS", projectId: p.id, stageId: stg.id, now: "2026-09-01T00:00:00.000Z",
+    })
+    const assessment = next.projects[0].stages[0].assessment
+    expect(assessment).toBeDefined()
+    // 新对象身份：评估被重算替换而非保留旧引用
+    expect(assessment).not.toBe(stg.assessment)
+    expect(typeof assessment?.score).toBe("number")
+    expect(assessment?.reviewer).toBe(stg.gateAgentName)
   })
 })
 

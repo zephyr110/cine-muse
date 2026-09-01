@@ -198,7 +198,7 @@ function BlockingShotEditor({
   const rerender = () => {
     dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: items })
     dispatch({ type: "UPDATE_PREVIS_CAMERA", projectId, stageId: stage.id, shotIndex, camera })
-    dispatch({ type: "RERENDER_PREVIS", projectId, stageId: stage.id })
+    dispatch({ type: "RERENDER_PREVIS", projectId, stageId: stage.id, now: new Date().toISOString() })
     onDone()
   }
 

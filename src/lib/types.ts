@@ -330,7 +330,7 @@ export type Action =
       shotIndex: number
       camera: PrevisShot["camera"]
     }
-  | { type: "RERENDER_PREVIS"; projectId: string; stageId: string }
+  | { type: "RERENDER_PREVIS"; projectId: string; stageId: string; now: string }
   | { type: "DELETE_ASSET"; assetId: string; now: string }
   | {
       type: "BIND_ASSET"

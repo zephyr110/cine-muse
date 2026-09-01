@@ -521,6 +521,15 @@ export function engineReducer(state: AppState, action: Action): AppState {
         // isPrevisArtifact 收窄为 Artifact & PrevisArtifact（shots 冲突），用 Object.assign 规避属性写入
         const shots = s.artifact.shots.map((shot) => renderPrevisShot(shot))
         Object.assign(s.artifact, { shots })
+        // 重新评估空间一致性（spec §6：修改后「重新渲染」= 三图即时更新 + 重新评估）。
+        // 与 finalizeStage 同构：以本轮迭代次数 + 现存资产绑定重算评估并重置审查人
+        const bindings: BoundAsset[] = p.assets.flatMap((b) => {
+          const asset = draft.assets.find((x) => x.id === b.assetId)
+          return asset ? [{ assetId: b.assetId, role: b.role, category: asset.category }] : []
+        })
+        const assessment = simulateAssessment(s, action.now, s.iterations.length, bindings)
+        assessment.reviewer = s.gateAgentName
+        s.assessment = assessment
       })
 
     case "EDIT_ARTIFACT":
