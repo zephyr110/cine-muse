@@ -23,6 +23,7 @@ import type {
   Action,
   AppState,
   EngineEvent,
+  PrevisUndoSnapshot,
   Project,
   WorkflowStage,
 } from "@/lib/types"
@@ -502,11 +503,48 @@ export function engineReducer(state: AppState, action: Action): AppState {
         pushEvent(draft, p, "mode_changed", `「${p.title}」干预模式已切换为 ${MODE_LABEL[action.mode]}`, action.now)
       })
 
+/** 预演撤销快照：仅取纯数据字段（blocking/camera/controls），排除 SVG/位图防膨胀 */
+function previsSnapshot(stage: WorkflowStage): PrevisUndoSnapshot | null {
+  if (!isPrevisArtifact(stage.artifact)) return null
+  return {
+    stageId: stage.id,
+    shots: stage.artifact.shots.map((s) => ({
+      shotIndex: s.shotIndex,
+      blocking: s.blocking,
+      camera: s.camera,
+    })),
+  }
+}
+
+/** 提交一次编辑：当前状态压入 past（与栈顶相同则跳过），清空 future */
+function pushUndo(draft: AppState, snapshot: PrevisUndoSnapshot | null) {
+  if (!snapshot) return
+  const past = draft.previsUndo.past
+  const top = past[past.length - 1]
+  if (top && top.stageId === snapshot.stageId && JSON.stringify(top.shots) === JSON.stringify(snapshot.shots)) return
+  past.push(snapshot)
+  if (past.length > 50) past.shift()
+  draft.previsUndo.future = []
+}
+
+/** 应用撤销快照到 stage（恢复 blocking/camera 并重渲染 SVG 三图） */
+function applyPrevisSnapshot(draft: AppState, stage: WorkflowStage, snapshot: PrevisUndoSnapshot) {
+  if (!isPrevisArtifact(stage.artifact)) return
+  for (const s of snapshot.shots) {
+    const shot = stage.artifact.shots.find((x) => x.shotIndex === s.shotIndex)
+    if (!shot) continue
+    shot.blocking = s.blocking
+    shot.camera = s.camera
+    Object.assign(shot, renderPrevisShot(shot))
+  }
+}
+
     case "UPDATE_PREVIS_BLOCKING":
       return produce(state, (draft) => {
         const p = draft.projects.find((x) => x.id === action.projectId)
         const s = p?.stages.find((x) => x.id === action.stageId)
         if (!p || !s || !isPrevisArtifact(s.artifact)) return
+        if (action.commit !== false) pushUndo(draft, previsSnapshot(s))
         const shot = s.artifact.shots[action.shotIndex]
         if (!shot) return
         shot.blocking = action.blocking
@@ -530,10 +568,35 @@ export function engineReducer(state: AppState, action: Action): AppState {
         const p = draft.projects.find((x) => x.id === action.projectId)
         const s = p?.stages.find((x) => x.id === action.stageId)
         if (!p || !s || !isPrevisArtifact(s.artifact)) return
+        if (action.commit !== false) pushUndo(draft, previsSnapshot(s))
         const shot = s.artifact.shots[action.shotIndex]
         if (!shot) return
         shot.camera = action.camera
         Object.assign(shot, renderPrevisShot(shot))
+      })
+
+    case "PREVIS_UNDO":
+      return produce(state, (draft) => {
+        const p = draft.projects.find((x) => x.id === action.projectId)
+        const s = p?.stages.find((x) => x.id === action.stageId)
+        if (!p || !s) return
+        const snap = draft.previsUndo.past.pop()
+        if (!snap || snap.stageId !== s.id) return
+        const current = previsSnapshot(s)
+        if (current) draft.previsUndo.future.push(current)
+        applyPrevisSnapshot(draft, s, snap)
+      })
+
+    case "PREVIS_REDO":
+      return produce(state, (draft) => {
+        const p = draft.projects.find((x) => x.id === action.projectId)
+        const s = p?.stages.find((x) => x.id === action.stageId)
+        if (!p || !s) return
+        const snap = draft.previsUndo.future.pop()
+        if (!snap || snap.stageId !== s.id) return
+        const current = previsSnapshot(s)
+        if (current) draft.previsUndo.past.push(current)
+        applyPrevisSnapshot(draft, s, snap)
       })
 
     case "RERENDER_PREVIS":

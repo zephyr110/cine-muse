@@ -355,5 +355,6 @@ export function createSeedState(): AppState {
     agents: SEED_AGENTS,
     models: SEED_MODELS,
     user: null,
+    previsUndo: { past: [], future: [] },
   }
 }

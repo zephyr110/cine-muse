@@ -56,6 +56,10 @@ export interface BlockingItem {
   position: [number, number, number]
   rotationY: number
   scale: number
+  /** 角色姿势：体型 + 姿势预设 + 关节角度（度，materialized 全量有效值） */
+  bodyType?: string
+  poseId?: string
+  controls?: Record<string, [number, number, number]>
 }
 
 export interface PrevisShot {
@@ -285,6 +289,17 @@ export interface AppState {
   agents: AgentMeta[]
   models: ModelConfig[]
   user: { email: string; name: string } | null
+  /** 预演台编辑撤销栈（快照仅含 blocking/camera/controls，排除位图防膨胀） */
+  previsUndo: {
+    past: PrevisUndoSnapshot[]
+    future: PrevisUndoSnapshot[]
+  }
+}
+
+/** 预演撤销快照：stageId + 各镜头纯数据字段 */
+export interface PrevisUndoSnapshot {
+  stageId: string
+  shots: { shotIndex: number; blocking: BlockingItem[]; camera: PrevisShot["camera"] }[]
 }
 
 /* ---------- Action 契约（引擎与 UI 通信边界） ---------- */
@@ -326,7 +341,15 @@ export type Action =
       now: string
     }
   | { type: "UPDATE_ASSET"; assetId: string; patch: Partial<Asset>; now: string }
-  | { type: "UPDATE_PREVIS_BLOCKING"; projectId: string; stageId: string; shotIndex: number; blocking: BlockingItem[] }
+  | {
+      type: "UPDATE_PREVIS_BLOCKING"
+      projectId: string
+      stageId: string
+      shotIndex: number
+      blocking: BlockingItem[]
+      /** false = 拖拽中间帧（不产生撤销快照）；默认 true */
+      commit?: boolean
+    }
   | {
       type: "UPDATE_PREVIS_MAPS"
       projectId: string
@@ -340,8 +363,11 @@ export type Action =
       stageId: string
       shotIndex: number
       camera: PrevisShot["camera"]
+      commit?: boolean
     }
   | { type: "RERENDER_PREVIS"; projectId: string; stageId: string; now: string }
+  | { type: "PREVIS_UNDO"; projectId: string; stageId: string }
+  | { type: "PREVIS_REDO"; projectId: string; stageId: string }
   | { type: "DELETE_ASSET"; assetId: string; now: string }
   | {
       type: "BIND_ASSET"

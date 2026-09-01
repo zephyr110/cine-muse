@@ -136,4 +136,40 @@ describe("migrateAppState", () => {
     expect(migrated.projects[0]?.stages[0].reviews).toEqual([])
     expect(migrated.projects[0]?.stages[0].references).toBeUndefined()
   })
+
+  it("PREVIS_UNDO 恢复上一次提交的摆位，PREVIS_REDO 重做", () => {
+    const state = stateWithPrevis()
+    const p = state.projects[0]
+    const stg = p.stages[0]
+    const move = (s: AppState, x: number): AppState =>
+      engineReducer(s, {
+        type: "UPDATE_PREVIS_BLOCKING", projectId: p.id, stageId: stg.id, shotIndex: 0, commit: true,
+        blocking: [{ id: "c1", kind: "character", name: "主角", position: [x, 0, 1], rotationY: 0, scale: 1 }],
+      })
+    const s1 = move(state, 1)
+    const s2 = move(s1, 2)
+    expect(shotsOf(s2)[0].blocking[0].position[0]).toBe(2)
+    const undone = engineReducer(s2, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
+    expect(shotsOf(undone)[0].blocking[0].position[0]).toBe(1)
+    const redone = engineReducer(undone, { type: "PREVIS_REDO", projectId: p.id, stageId: stg.id })
+    expect(shotsOf(redone)[0].blocking[0].position[0]).toBe(2)
+    // 撤销到顶后不再变化
+    const undone2 = engineReducer(undone, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
+    expect(shotsOf(undone2)[0].blocking[0].position[0]).toBe(0)
+    const undone3 = engineReducer(undone2, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
+    expect(shotsOf(undone3)[0].blocking[0].position[0]).toBe(0)
+  })
+
+  it("commit=false 的中间帧不产生撤销快照", () => {
+    const state = stateWithPrevis()
+    const p = state.projects[0]
+    const stg = p.stages[0]
+    const s1 = engineReducer(state, {
+      type: "UPDATE_PREVIS_BLOCKING", projectId: p.id, stageId: stg.id, shotIndex: 0, commit: false,
+      blocking: [{ id: "c1", kind: "character", name: "主角", position: [3, 0, 1], rotationY: 0, scale: 1 }],
+    })
+    const undone = engineReducer(s1, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
+    // 无快照 → 撤销无效果
+    expect(shotsOf(undone)[0].blocking[0].position[0]).toBe(3)
+  })
 })
