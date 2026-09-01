@@ -29,6 +29,7 @@ export function PrevisFullscreenEditor({
       {/* DialogContent 自带 portal + overlay；全屏覆盖需中和基类居中 translate */}
       <DialogContent
         showCloseButton={false}
+        overlayClassName="bg-black/40 backdrop-blur-sm"
         className="fixed inset-0 z-50 flex max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none border-0 bg-background p-0 sm:max-w-none"
       >
         {/* 顶栏：身份信息 + 退出 */}

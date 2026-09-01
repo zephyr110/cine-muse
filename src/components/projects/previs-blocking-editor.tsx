@@ -110,11 +110,18 @@ function BlockingShotEditor({
 
   const draggable = items.filter((b) => b.kind !== "terrain")
 
-  /** 指针坐标 → 世界 x/z（renderPreviewSvg.project 的逆运算，限制在画布内） */
+  /** 指针坐标 → 世界 x/z（renderPreviewSvg.project 的逆运算，限制在画布内）。
+   *  容器宽高比可能偏离 16:9（如超宽屏下 max-h-full 钳制）：按 SVG 实际
+   *  适配后的内嵌矩形（letterbox 居中）映射，而非整个容器，保证任意窗口比例下精确。 */
   const worldFromEvent = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = svgBoxRef.current!.getBoundingClientRect()
-    const px = Math.min(SVG_W, Math.max(0, ((e.clientX - rect.left) / rect.width) * SVG_W))
-    const py = Math.min(SVG_H, Math.max(0, ((e.clientY - rect.top) / rect.height) * SVG_H))
+    const scale = Math.min(rect.width / SVG_W, rect.height / SVG_H)
+    const fitW = SVG_W * scale
+    const fitH = SVG_H * scale
+    const offsetX = (rect.width - fitW) / 2
+    const offsetY = (rect.height - fitH) / 2
+    const px = Math.min(SVG_W, Math.max(0, ((e.clientX - rect.left - offsetX) / fitW) * SVG_W))
+    const py = Math.min(SVG_H, Math.max(0, ((e.clientY - rect.top - offsetY) / fitH) * SVG_H))
     return { x: round2((px - SVG_W / 2) / PX_PER_UNIT), z: round2(1 - (py - SVG_H / 2) / PX_PER_UNIT) }
   }
 
