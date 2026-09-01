@@ -155,9 +155,13 @@ function recomputeProject(p: Project, now: string): Project {
 function startNextStage(state: AppState, project: Project, now: string): boolean {
   const next = project.stages.find((s) => s.status === "pending")
   if (!next) return false
-  // previs 参考附件注入：启动视频生成时，从上游已完成的 previs 产物提取深度/边缘图
+  // previs 参考附件注入：启动视频生成时，从上游已完成的 previs 产物提取深度/边缘图。
+  // approved 同样视为可用 —— review/manual 模式下人工确认节点以「approved」收尾（见 APPROVE_STAGE），
+  // 若只认 completed，星尘余晖等 demo 的 previs 附件在人工确认后永远无法注入。
   if (next.agentId === "video_gen") {
-    const previsStage = project.stages.find((s) => s.agentId === "previs" && isPrevisArtifact(s.artifact) && s.status === "completed")
+    const previsStage = project.stages.find(
+      (s) => s.agentId === "previs" && isPrevisArtifact(s.artifact) && ["completed", "approved"].includes(s.status),
+    )
     const previs = previsStage?.artifact
     if (previs && isPrevisArtifact(previs)) {
       const first = previs.shots[0]

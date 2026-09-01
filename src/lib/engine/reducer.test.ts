@@ -20,6 +20,21 @@ function stateWithPrevis(rendered = true): AppState {
 const shotsOf = (state: AppState): PrevisShot[] =>
   (state.projects[0].stages[0].artifact as unknown as { shots: PrevisShot[] }).shots
 
+/** 构造 previs → video_gen 双环节项目（星尘余晖式 review/manual 场景）：previs 携带已渲染产物，video_gen 待启动 */
+function stateWithPrevisFlow(
+  previsStatus: "waiting_approval" | "completed" | "approved",
+  projectStatus: "waiting_approval" | "queued",
+): AppState {
+  const shot = renderPrevisShot(makePrevisShot(0))
+  // PrevisArtifact.shots 与 Artifact.shots?: number 冲突，工件放入 stage 时按 Artifact 边界收窄
+  const artifact = { kind: "previs" as const, title: "t", summary: "", shots: [shot] } as unknown as Artifact
+  const base = engineReducer(createInitialState(), { type: "HYDRATE", state: createInitialState() })
+  const p = base.projects[0]
+  const previsStage = { ...p.stages[0], id: "stg-previs", agentId: "previs", status: previsStatus, artifact }
+  const videoStage = { ...p.stages[0], id: "stg-video", agentId: "video_gen", status: "pending" as const }
+  return { ...base, projects: [{ ...p, status: projectStatus, stages: [previsStage, videoStage] }] }
+}
+
 describe("previs reducer", () => {
   it("UPDATE_PREVIS_BLOCKING 更新摆位并重渲染三图", () => {
     const state = stateWithPrevis()
@@ -75,6 +90,37 @@ describe("previs reducer", () => {
     expect(assessment).not.toBe(stg.assessment)
     expect(typeof assessment?.score).toBe("number")
     expect(assessment?.reviewer).toBe(stg.gateAgentName)
+  })
+})
+
+describe("previs 参考附件注入（video_gen 启动时）", () => {
+  /** 断言 video_gen 已从 previs 产物注入参考附件 */
+  const expectPrevisRefs = (state: AppState) => {
+    const video = state.projects[0].stages[1]
+    expect(video.status).toBe("running")
+    expect(video.references?.[0]?.kind).toBe("previs")
+    expect(video.references?.[0]?.depthUrl.startsWith("data:image/svg+xml")).toBe(true)
+    expect(video.references?.[0]?.edgeUrl.startsWith("data:image/svg+xml")).toBe(true)
+  }
+
+  it("approved 状态（review/manual 人工确认）的 previs 环节注入参考附件", () => {
+    const state = stateWithPrevisFlow("waiting_approval", "waiting_approval")
+    const p = state.projects[0]
+    const previsStage = p.stages[0]
+    // 复现 C-1 缺陷路径：人工确认 → approved → startNextStage 启动 video_gen
+    const next = engineReducer(state, {
+      type: "APPROVE_STAGE", projectId: p.id, stageId: previsStage.id, now: "2026-09-01T00:00:00.000Z",
+    })
+    expect(next.projects[0].stages[0].status).toBe("approved")
+    expectPrevisRefs(next)
+  })
+
+  it("completed 状态（auto/guided 自动确认）的 previs 环节注入参考附件", () => {
+    const state = stateWithPrevisFlow("completed", "queued")
+    const p = state.projects[0]
+    // 启动项目即触发 startNextStage：previs 已完成、video_gen 待启动
+    const next = engineReducer(state, { type: "START_PROJECT", projectId: p.id, now: "2026-09-01T00:00:00.000Z" })
+    expectPrevisRefs(next)
   })
 })
 
