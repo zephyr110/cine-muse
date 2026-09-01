@@ -164,8 +164,10 @@ function BlockingShotEditor({
   }, [propsKey, shot])
 
   /** 本地编辑态提交到 reducer（一次逻辑编辑仅产生一个撤销快照：
-   *   BLOCKING 先推快照（编辑前状态），CAMERA 复用同一快照不重复推） */
+   *   BLOCKING 先推快照（编辑前状态），CAMERA 复用同一快照不重复推；
+   *   与 reducer 当前状态一致时跳过（无变更的「重新渲染」不产生冗余快照） */
   const commit = (nextItems: BlockingItem[], nextCamera: PrevisShot["camera"]) => {
+    if (JSON.stringify([nextItems, nextCamera]) === propsKey) return
     dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: nextItems, commit: true })
     dispatch({ type: "UPDATE_PREVIS_CAMERA", projectId, stageId: stage.id, shotIndex, camera: nextCamera, commit: false })
   }

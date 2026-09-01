@@ -4,9 +4,11 @@
 **Files:** `src/components/projects/previs-3d-viewport.tsx`, `src/components/projects/previs-blocking-editor.tsx`, `src/lib/engine/previs-poses.ts(+test)`, `src/lib/engine/reducer.ts(+test)`, `src/lib/types.ts`, `src/lib/engine/seed.ts`, `package.json`
 **Checks run:** `tsc --noEmit` clean · `vitest run` 26/26 pass · `next build` exit 0
 
-## Verdict: **Needs fixes**
+## Verdict (post-fix 019fadc): **Needs fixes**
 
-Three Important findings (pose edits never reach the 3D mannequin in-session; undo's first click is a silent no-op after every blocking-only edit; cross-stage undo permanently destroys the top snapshot). All are small, localized fixes; none lose user data or crash.
+Original I1-I3 / M1-M3, M5-M7 are fixed and verified. M4's fix (capture from shot.camera) introduces a new Important defect: the capture camera never `lookAt`s the shot target and the camera gizmo sits exactly on the capture camera — the default export path renders from the wrong orientation with a wireframe-box ghost baked into the preview/depth maps. Two Important new findings + three Minor residuals, listed in the re-review section below.
+
+## Original review (pre-fix)
 
 ---
 
@@ -72,3 +74,44 @@ Snapshots intentionally exclude `previewUrl/depthUrl/edgeUrl` (anti-bloat), so a
 - **Reference injection** — `startNextStage` prefers `depthUrl/edgeUrl` PNG over SVG fallback; matches types.
 - **Toolchain** — tsc clean, 26/26 vitest pass, `next build` succeeds.
 - **Test coverage gap (minor):** no reducer test for the stageId-mismatch guard or the 50-cap eviction; the double-dispatch undo no-op is only observable at the editor level, so no test catches I2/I3 today.
+
+---
+
+## Re-review of fix commit 019fadc
+
+**Checks re-run on 019fadc:** `tsc --noEmit` clean · `vitest run` 26/26 pass · `next build` exit 0.
+
+### Fix verification (all confirmed)
+
+- **I1 FIXED** — `previs-3d-viewport.tsx:268-303`: per-item rig signature (`bodyType|poseId|JSON.stringify(controls)`) compared on every sync; mismatch → `disposeObject(mesh)` + rebuild. JSON key order is stable (spread/slider reassign existing keys), so no spurious rebuilds. Undo/redo now also rebuilds the mannequin correctly (external restore changes controls).
+- **I2 FIXED** — `previs-blocking-editor.tsx:163-169`: CAMERA dispatch now `commit: false`; one snapshot (pre-edit state) per logical edit. Traced: BLOCKING pushes `[B0,C0]` (pre-edit), CAMERA applies without push → stack top is the pre-edit state → first 撤销 click is now visibly effective. Dedupe still collapses camera-only commits correctly.
+- **I3 FIXED** — `reducer.ts:581-601`: both PREVIS_UNDO and PREVIS_REDO peek the top and return on stageId mismatch before popping — cross-stage history is preserved.
+- **M1 FIXED** — highlight moved to a dedicated `hlGroup` (scene-level, `:211-215`), excluded from raycast (only `itemMeshes` are intersected) and hidden (`visible = false`) inside `withCaptureView` and `captureOrbitPreviews`. Highlight world-transform placement (`hl.position/rotation/scale.copy(mesh.*)`) is the same verified-correct pattern as the edge capture.
+- **M2 PARTIAL** — `disposeObject` on rebuild and removal (`:269-276`, `:298-305`); depth material disposed in finally (`:453-460`); edge geometry/material disposed (`:490-507`). Residual: `hlGroup.clear()` detaches without disposing (see N4).
+- **M3 FIXED** — `withCaptureView` and `captureOrbitPreviews` both restore position/target/aspect in `finally`; rt disposed.
+- **M5 FIXED** — paste id salted with 4 random chars; position clamped to `X_RANGE`/`Z_RANGE` (`previs-blocking-editor.tsx:595-607`).
+- **M6 FIXED** — 3D drag `onMoveItem` clamped to `X_RANGE`/`Z_RANGE` (`:664-678`).
+- **M7 FIXED** — `captured`/`orbits` cleared in the propsKey sync effect (`:157-161`).
+
+### NEW issues introduced/remaining
+
+**N1. IMPORTANT — M4 fix: capture camera never looks at the shot target**
+`previs-3d-viewport.tsx:406-431` (`withCaptureView`): camera position, controls.target and aspect are set, but `st.camera.lookAt(...cam.target)` is never called — the camera quaternion keeps the last OrbitControls orientation. `renderer.render` uses position + quaternion, so the capture renders from the shot camera's *position* while pointing in the *orbit* direction.
+Failure scenario (default path): seed shot camera is `[0,2,8] → [0,1,0]` (`previs-types.ts:11`); orbit camera starts at `(8,8,10) → (0,1,0)`. Open the fullscreen editor and click 重新渲染 without touching anything → capture is taken from `(0,2,8)` oriented along `(8,8,10)→(0,1,0)` — the shot target `(0,1,0)` is outside the frame. Exported preview/depth/edge PNGs mismatch shot.camera (which video_gen consumes) — the exact problem M4 was meant to fix.
+Fix: `st.camera.lookAt(...cam.target)` after positioning; restore is fine as-is (position+target restore + next `controls.update()` re-derives the interactive orientation).
+
+**N2. IMPORTANT — M4 fix: camera gizmo ghost baked into preview/depth exports**
+The gizmo sync (`:336-346`) positions `camGizmo` at shot.camera and keeps it `visible = true` unless 从机位看 is on; `withCaptureView` hides only `hlGroup`. Now that capture renders from shot.camera, the 0.5×0.3×0.4 wireframe box sits exactly on the capture camera: its front face at z=0.2 spans 0.5×0.3 while the 45° frustum at that distance is ~0.295×0.166 — the box fills/overframes the whole view. Preview gets a wireframe rectangle across the frame; the depth pass (MeshDepthMaterial) renders a solid near-white slab covering the center. Edge pass unaffected (fresh edgeScene).
+Fix: hide `camGizmo` in `withCaptureView` (and restore in finally) alongside `hlGroup`; or remove it from the render via a layer flag.
+
+**N3. MINOR — I2 residual: no-op commits push one redundant snapshot**
+`rerender()` always calls `commit(items, camera)` (`previs-blocking-editor.tsx:310`); a bare 重新渲染 click with no changes pushes the current state as a snapshot (pushUndo dedupes only against the stack top, which is the pre-edit state of the last real edit). The first 撤销 click after such a rerender pops an identical state → no visible change. At most one redundant entry per real edit (subsequent no-ops dedupe against it). Fix: in the reducer, skip the push when the post-edit state equals the snapshot.
+
+**N4. MINOR — M2 residual: highlight layer still leaks per rebuild**
+`st.hlGroup.clear()` (`:320`) detaches the previous highlight but never disposes its EdgesGeometry/LineBasicMaterial. During a 3D drag of the selected item the highlight effect re-runs every pointermove tick — one small GPU allocation per tick, bounded until viewport unmount. Fix: dispose the removed child (traverse before/after clear).
+
+**N5. MINOR — no new tests for the fixes**
+`reducer.test.ts` unchanged: I3's peek-then-pop mismatch path (cross-stage preserve), I2's single-snapshot-per-edit at the editor level, and the capture-view orientation are all untested. A capture-oriented test (or assertion that the captured render includes the shot target) would have caught N1.
+
+### Re-review verdict
+All original findings are addressed; **the M4 fix regressed the capture feature** (N1 wrong orientation, N2 gizmo ghost) — the default 重新渲染 path now produces exports that don't match the shot camera, which was M4's entire purpose. N1/N2 must be fixed before this batch is merged.

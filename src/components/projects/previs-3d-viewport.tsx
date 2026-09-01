@@ -318,6 +318,13 @@ export const PrevisViewport = React.forwardRef<
   React.useEffect(() => {
     const st = stateRef.current
     if (!st) return
+    // 释放旧高亮几何/材质（拖拽中每帧重建，避免 GPU 缓冲累积）
+    st.hlGroup.traverse((o) => {
+      if (o === st.hlGroup) return
+      const m = o as THREE.Mesh
+      m.geometry?.dispose()
+      ;(m.material as THREE.Material | undefined)?.dispose()
+    })
     st.hlGroup.clear()
     const mesh = selectedId ? st.itemMeshes.get(selectedId) : null
     if (mesh) {
@@ -412,14 +419,18 @@ export const PrevisViewport = React.forwardRef<
         const prevTarget = st.controls.target.clone()
         const prevAspect = st.camera.aspect
         st.camera.position.set(...cam.position)
+        st.camera.lookAt(...cam.target) // 机位朝向必须指向目标（否则沿用轨道朝向）
         st.controls.target.set(...cam.target)
         st.camera.aspect = w / h
         st.camera.updateProjectionMatrix()
+        // 导出画面排除：选中高亮 + 机位线框
         st.hlGroup.visible = false
+        st.camGizmo.visible = false
         try {
           return fn()
         } finally {
           st.hlGroup.visible = true
+          st.camGizmo.visible = !propsRef.current.viewFromCamera
           st.camera.position.copy(prevPos)
           st.controls.target.copy(prevTarget)
           st.camera.aspect = prevAspect
