@@ -72,27 +72,31 @@ function NumField({
   )
 }
 
-/** 单镜头编辑：拖拽/选中微调/坐标输入 + 机位参数 + 重新渲染 */
+/** 单镜头编辑：拖拽/选中微调/坐标输入 + 机位参数 + 重新渲染；inline 堆叠 / fullscreen 三栏 */
 function BlockingShotEditor({
-  projectId, stage, shotIndex, shot, onDone,
+  projectId, stage, shotIndex, shot, shotsCount, onShotIndexChange, onDone, variant = "inline",
 }: {
   projectId: string
   stage: WorkflowStage
   shotIndex: number
   shot: PrevisShot
+  shotsCount: number
+  onShotIndexChange: (index: number) => void
   onDone: () => void
+  variant?: "inline" | "fullscreen"
 }) {
   const { dispatch } = useApp()
   const [items, setItems] = React.useState<BlockingItem[]>(shot.blocking)
   const [camera, setCamera] = React.useState<PrevisShot["camera"]>(shot.camera)
   const [selected, setSelected] = React.useState<string | null>(null)
   const [dragId, setDragId] = React.useState<string | null>(null)
+  const [mapTab, setMapTab] = React.useState<"preview" | "depth" | "edge">("preview")
   const svgBoxRef = React.useRef<HTMLDivElement | null>(null)
 
-  const previewSvg = injectMarkerIds(
-    renderPrevisShot({ ...shot, blocking: items, camera }).previewSvg,
-    items,
-  )
+  const rendered = renderPrevisShot({ ...shot, blocking: items, camera })
+  const previewSvg = injectMarkerIds(rendered.previewSvg, items)
+  const depthSvg = rendered.depthSvg
+  const edgeSvg = rendered.edgeSvg
 
   // 选中标记高亮（每次重新注入 SVG 后同步一次；data-selected 由 style 标签描边）
   React.useEffect(() => {
@@ -202,109 +206,205 @@ function BlockingShotEditor({
     onDone()
   }
 
+  // —— 布局区块：inline 堆叠、fullscreen 三栏，共用同一交互逻辑 ——
+  const canvasEl = (
+    <div
+      ref={svgBoxRef}
+      tabIndex={0}
+      role="application"
+      aria-label="布景俯视图编辑：拖拽角色/道具标记，或选中后用方向键微调"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onKeyDown={onKeyDown}
+      dangerouslySetInnerHTML={{ __html: mapTab === "preview" ? previewSvg : mapTab === "depth" ? depthSvg : edgeSvg }}
+      className={cn(
+        "w-full cursor-move rounded-md border bg-background select-none touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        variant === "fullscreen" ? "h-full" : "aspect-video",
+      )}
+    />
+  )
+
+  const mapTabsEl = (
+    <div className="flex gap-1.5">
+      {(
+        [
+          ["preview", "布景"],
+          ["depth", "深度"],
+          ["edge", "边缘"],
+        ] as const
+      ).map(([key, label]) => (
+        <button
+          key={key}
+          type="button"
+          onClick={() => setMapTab(key)}
+          className={cn(
+            "rounded-md border px-2 py-1 text-xs transition-colors",
+            mapTab === key
+              ? "border-primary/60 bg-primary/10 font-medium"
+              : "border-border/60 text-muted-foreground hover:border-primary/30",
+          )}
+        >
+          {label}图
+        </button>
+      ))}
+    </div>
+  )
+
+  const itemsEl = (
+    <div className="flex flex-col gap-1">
+      <p className="text-[11px] font-medium text-muted-foreground">布景项（点击选中，方向键微调）</p>
+      {draggable.length > 0 ? (
+        draggable.map((b) => (
+          <div
+            key={b.id}
+            onClick={() => setSelected(selected === b.id ? null : b.id)}
+            className={cn(
+              "flex cursor-pointer items-center gap-2 rounded-md border px-2 py-1",
+              selected === b.id ? "border-primary/60 bg-primary/5" : "border-border/60",
+            )}
+          >
+            <span className="w-16 shrink-0 truncate text-[11px] text-muted-foreground">
+              {b.kind === "character" ? "角色" : "道具"} · {b.name}
+            </span>
+            <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              X
+              <NumField
+                value={b.position[0]}
+                step={0.5}
+                onCommit={(v) => setPosition(b.id, 0, v)}
+                ariaLabel={`${b.name} X 坐标`}
+              />
+            </label>
+            <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              Z
+              <NumField
+                value={b.position[2]}
+                step={0.5}
+                onCommit={(v) => setPosition(b.id, 2, v)}
+                ariaLabel={`${b.name} Z 坐标`}
+              />
+            </label>
+          </div>
+        ))
+      ) : (
+        <p className="text-[11px] text-muted-foreground">无可拖拽的布景项</p>
+      )}
+    </div>
+  )
+
+  const cameraEl = (
+    <div className="rounded-md border border-border/60 p-2">
+      <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+        <CameraIcon className="size-3" /> 机位参数（视锥随目标实时变化）
+      </p>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-7">
+        {(["position", "target"] as const).map((axis) =>
+          (["x", "y", "z"] as const).map((letter, idx) => (
+            <label key={`${axis}-${letter}`} className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+              {axis === "position" ? "机位" : "目标"} {letter.toUpperCase()}
+              <NumField
+                value={camera[axis][idx as 0 | 1 | 2]}
+                step={0.5}
+                onCommit={(v) => setCameraAxis(axis, idx as 0 | 1 | 2, v)}
+                ariaLabel={`${axis === "position" ? "机位" : "目标"} ${letter.toUpperCase()}`}
+              />
+            </label>
+          )),
+        )}
+        <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+          FOV（度）
+          <NumField value={camera.fov} step={5} onCommit={setCameraFov} ariaLabel="视野角度 FOV" />
+        </label>
+      </div>
+    </div>
+  )
+
+  const actionsEl = (
+    <div className="flex justify-end gap-2">
+      <Button size="sm" variant="ghost" onClick={onDone}>
+        取消
+      </Button>
+      <Button size="sm" onClick={rerender}>
+        <RotateCcwIcon className="size-3.5" /> 重新渲染
+      </Button>
+    </div>
+  )
+
+  const shotSelectorEl = shotsCount > 1 && (
+    <div className="flex flex-wrap gap-1.5">
+      {Array.from({ length: shotsCount }, (_, i) => (
+        <button
+          key={i}
+          type="button"
+          onClick={() => onShotIndexChange(i)}
+          className={cn(
+            "rounded-md border px-2 py-1 text-xs transition-colors",
+            i === shotIndex
+              ? "border-primary/60 bg-primary/10 font-medium"
+              : "border-border/60 text-muted-foreground hover:border-primary/30",
+          )}
+        >
+          镜头 {i + 1}
+        </button>
+      ))}
+    </div>
+  )
+
+  const styleEl = <style>{`[data-bid]{cursor:grab}[data-bid][data-selected]{stroke:#dc2626;stroke-width:3}`}</style>
+
+  if (variant === "fullscreen") {
+    return (
+      <>
+        {styleEl}
+        <div className="grid h-full min-h-0 grid-cols-[220px_minmax(0,1fr)_280px] gap-4">
+        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto pr-1">
+          {shotSelectorEl}
+          {itemsEl}
+        </div>
+        <div className="flex min-h-0 flex-col gap-3">
+          {mapTabsEl}
+          <div className="min-h-0 flex-1 rounded-md bg-muted/20 p-1">{canvasEl}</div>
+        </div>
+        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto pl-1">
+          {cameraEl}
+          {actionsEl}
+        </div>
+        </div>
+      </>
+    )
+  }
+
   return (
     <div className="space-y-3">
-      <style>{`[data-bid]{cursor:grab}[data-bid][data-selected]{stroke:#dc2626;stroke-width:3}`}</style>
-      <div
-        ref={svgBoxRef}
-        tabIndex={0}
-        role="application"
-        aria-label="布景俯视图编辑：拖拽角色/道具标记，或选中后用方向键微调"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onKeyDown={onKeyDown}
-        dangerouslySetInnerHTML={{ __html: previewSvg }}
-        className="w-full cursor-move rounded-md border bg-background select-none touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      />
+      {styleEl}
+      {shotSelectorEl}
+      {canvasEl}
       <p className="text-[11px] text-muted-foreground">
         提示：拖动角色/道具标记调整位置；点击选中后可用方向键微调（Shift 更细）或直接输入坐标，完成后点击「重新渲染」。
       </p>
-      {draggable.length > 0 && (
-        <div className="flex flex-col gap-1">
-          {draggable.map((b) => (
-            <div
-              key={b.id}
-              onClick={() => setSelected(selected === b.id ? null : b.id)}
-              className={cn(
-                "flex cursor-pointer items-center gap-2 rounded-md border px-2 py-1",
-                selected === b.id ? "border-primary/60 bg-primary/5" : "border-border/60",
-              )}
-            >
-              <span className="w-16 shrink-0 truncate text-[11px] text-muted-foreground">
-                {b.kind === "character" ? "角色" : "道具"} · {b.name}
-              </span>
-              <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                X
-                <NumField
-                  value={b.position[0]}
-                  step={0.5}
-                  onCommit={(v) => setPosition(b.id, 0, v)}
-                  ariaLabel={`${b.name} X 坐标`}
-                />
-              </label>
-              <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                Z
-                <NumField
-                  value={b.position[2]}
-                  step={0.5}
-                  onCommit={(v) => setPosition(b.id, 2, v)}
-                  ariaLabel={`${b.name} Z 坐标`}
-                />
-              </label>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="rounded-md border border-border/60 p-2">
-        <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-          <CameraIcon className="size-3" /> 机位参数（视锥随目标实时变化）
-        </p>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-7">
-          {(["position", "target"] as const).map((axis) =>
-            (["x", "y", "z"] as const).map((letter, idx) => (
-              <label key={`${axis}-${letter}`} className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-                {axis === "position" ? "机位" : "目标"} {letter.toUpperCase()}
-                <NumField
-                  value={camera[axis][idx as 0 | 1 | 2]}
-                  step={0.5}
-                  onCommit={(v) => setCameraAxis(axis, idx as 0 | 1 | 2, v)}
-                  ariaLabel={`${axis === "position" ? "机位" : "目标"} ${letter.toUpperCase()}`}
-                />
-              </label>
-            )),
-          )}
-          <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-            FOV（度）
-            <NumField value={camera.fov} step={5} onCommit={setCameraFov} ariaLabel="视野角度 FOV" />
-          </label>
-        </div>
-      </div>
-      <div className="flex justify-end gap-2">
-        <Button size="sm" variant="ghost" onClick={onDone}>
-          取消
-        </Button>
-        <Button size="sm" onClick={rerender}>
-          <RotateCcwIcon className="size-3.5" /> 重新渲染
-        </Button>
-      </div>
+      {itemsEl}
+      {cameraEl}
+      {actionsEl}
     </div>
   )
 }
 
 /**
  * 2D 布景干预（manual 模式专用）：镜头选择 + 布景拖拽/微调 + 机位参数 + 重新渲染。
+ * variant="fullscreen" 时切换为三栏布局（左镜头/布景项 · 中画布+三图 · 右机位/操作）。
  * 每镜编辑状态由 key 隔离，切换镜头自动重置。
  */
 export function PrevisBlockingEditor({
-  projectId, stage, shotIndex, onShotIndexChange, onDone,
+  projectId, stage, shotIndex, onShotIndexChange, onDone, variant = "inline",
 }: {
   projectId: string
   stage: WorkflowStage
   shotIndex: number
   onShotIndexChange: (index: number) => void
   onDone: () => void
+  variant?: "inline" | "fullscreen"
 }) {
   const artifact = stage.artifact
   if (!isPrevisArtifact(artifact)) return null
@@ -313,28 +413,22 @@ export function PrevisBlockingEditor({
   const index = Math.min(Math.max(shotIndex, 0), shots.length - 1)
   const shot = shots[index]
 
-  return (
-    <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
-      {shots.length > 1 && (
-        <div className="flex flex-wrap gap-1.5">
-          {shots.map((s, i) => (
-            <button
-              key={s.shotIndex}
-              type="button"
-              onClick={() => onShotIndexChange(i)}
-              className={cn(
-                "rounded-md border px-2 py-1 text-xs transition-colors",
-                i === index
-                  ? "border-primary/60 bg-primary/10 font-medium"
-                  : "border-border/60 text-muted-foreground hover:border-primary/30",
-              )}
-            >
-              镜头 {s.shotIndex + 1}
-            </button>
-          ))}
-        </div>
-      )}
-      <BlockingShotEditor key={index} projectId={projectId} stage={stage} shotIndex={index} shot={shot} onDone={onDone} />
-    </div>
+  const editor = (
+    <BlockingShotEditor
+      key={index}
+      projectId={projectId}
+      stage={stage}
+      shotIndex={index}
+      shot={shot}
+      shotsCount={shots.length}
+      onShotIndexChange={onShotIndexChange}
+      onDone={onDone}
+      variant={variant}
+    />
+  )
+  return variant === "inline" ? (
+    <div className="space-y-3 rounded-lg border bg-muted/30 p-3">{editor}</div>
+  ) : (
+    editor
   )
 }
