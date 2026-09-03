@@ -6,24 +6,31 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CheckIcon,
-  EyeIcon,
-  PenLineIcon,
   RocketIcon,
   SparklesIcon,
   Wand2Icon,
-  ZapIcon,
 } from "lucide-react"
 
-import { BOOST_SLOTS, GENRE_LIBRARY, STYLE_LIBRARY } from "@/lib/engine/templates"
+import { BOOST_SLOTS } from "@/lib/engine/templates"
 import { useApp } from "@/lib/store"
 import { formatMinutes } from "@/lib/format"
-import { ASSET_CATEGORY_LABEL, MODE_LABEL } from "@/lib/types"
+import { ASSET_CATEGORY_LABEL } from "@/lib/types"
 import type {
   AssetCategory,
   InterventionMode,
   NewProjectInput,
   WorkflowTemplate,
 } from "@/lib/types"
+import {
+  DURATIONS,
+  DURATION_ITEMS,
+  GENRES,
+  MODES,
+  MODE_SPECTRUM,
+  QUALITY_ITEMS,
+  STYLES,
+  TEMPLATES,
+} from "./new-project-config"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -38,99 +45,6 @@ import {
 } from "@/components/ui/select"
 
 const STEPS = ["创意", "风格", "规格", "模板", "干预与资产"]
-
-// 题材/风格列表从模板库派生：新增预设自动出现在向导中，避免双份维护漂移
-const GENRES = Object.keys(GENRE_LIBRARY)
-
-const STYLE_OPTIONS: Record<string, { desc: string; gradient: string }> = {
-  赛博朋克: { desc: "霓虹蓝紫 · 雨夜反光 · 复古未来", gradient: "from-violet-500/30 via-fuchsia-500/15 to-cyan-500/30" },
-  黑色电影: { desc: "低照度硬光 · 阴影切割 · 冷峻", gradient: "from-slate-600/40 via-zinc-800/30 to-slate-900/40" },
-  治愈系: { desc: "暖调柔光 · 自然饱和度 · 留白", gradient: "from-amber-400/30 via-orange-300/20 to-rose-400/30" },
-  古风: { desc: "水墨质感 · 低饱和青灰 · 对称", gradient: "from-emerald-600/30 via-teal-500/15 to-lime-500/25" },
-  赛博国风: { desc: "霓虹 + 水墨 · 青金配色", gradient: "from-sky-500/30 via-teal-400/15 to-amber-400/30" },
-  纪实: { desc: "自然光 · 手持晃动 · 真实颗粒", gradient: "from-stone-500/30 via-amber-600/15 to-stone-700/30" },
-  动画: { desc: "高饱和 · 风格化形变 · 夸张透视", gradient: "from-rose-500/30 via-orange-400/20 to-yellow-400/30" },
-}
-const STYLES: { id: string; desc: string; gradient: string }[] = Object.keys(STYLE_LIBRARY).map(
-  (id) => ({ id, ...STYLE_OPTIONS[id] }),
-)
-
-const DURATIONS = [30, 60, 90, 120, 180, 240]
-
-const DURATION_ITEMS = DURATIONS.map((d) => ({
-  value: String(d),
-  label: `${d / 60} 分钟`,
-}))
-
-const QUALITY_ITEMS: { value: NewProjectInput["quality"]; label: string }[] = [
-  { value: "draft", label: "草稿 (720p)" },
-  { value: "standard", label: "标准 (1080p)" },
-  { value: "hd", label: "高清 (4K)" },
-]
-
-const TEMPLATES: { id: WorkflowTemplate; title: string; desc: string; nodes: { name: string; checkpoint?: boolean }[]; recommended?: boolean }[] = [
-  {
-    id: "full",
-    title: "完整流水线",
-    desc: "7 个执行环节全流程协作，含质量门禁与人工确认节点",
-    recommended: true,
-    nodes: [
-      { name: "剧本" }, { name: "门禁" }, { name: "分镜" }, { name: "门禁" },
-      { name: "风格设定", checkpoint: true }, { name: "场景" }, { name: "视频" },
-      { name: "门禁" }, { name: "配音" }, { name: "剪辑", checkpoint: true },
-    ],
-  },
-  {
-    id: "quick",
-    title: "快速预览",
-    desc: "3 个环节出粗剪样片，适合创意验证与提案",
-    nodes: [{ name: "剧本" }, { name: "门禁" }, { name: "视频" }, { name: "门禁" }, { name: "成片", checkpoint: true }],
-  },
-]
-
-const MODES: {
-  id: InterventionMode
-  title: string
-  desc: string
-  badge: string
-  icon: React.ReactNode
-  recommended?: boolean
-}[] = [
-  {
-    id: "auto",
-    title: MODE_LABEL.auto,
-    desc: "零打断跑完全流程，直接交付成片",
-    badge: "适合批量出片与复跑",
-    icon: <ZapIcon className="size-4" />,
-  },
-  {
-    id: "guided",
-    title: MODE_LABEL.guided,
-    desc: "流程不打断，agents 消费绑定资产作为强约束",
-    badge: "「指定这张脸」式前置干预",
-    icon: <Wand2Icon className="size-4" />,
-    recommended: true,
-  },
-  {
-    id: "review",
-    title: MODE_LABEL.review,
-    desc: "关键节点（风格设定、成片前）暂停人工确认",
-    badge: "2 个确认点",
-    icon: <EyeIcon className="size-4" />,
-  },
-  {
-    id: "manual",
-    title: MODE_LABEL.manual,
-    desc: "审查式基础上，每个环节产出都可手动改写",
-    badge: "全程可介入",
-    icon: <PenLineIcon className="size-4" />,
-  },
-]
-
-/** 干预深度谱系（L0 全自动 → L3 手作）说明 */
-const MODE_SPECTRUM = (["auto", "guided", "review", "manual"] as const).map(
-  (m, i) => `L${i} ${MODE_LABEL[m]}`,
-)
 
 export function NewProjectWizard() {
   const router = useRouter()
