@@ -120,9 +120,9 @@ function durationAliases(d: number): string[] {
   }
   out.push(`${min}分钟`)
   if (min === 1) out.push("一分钟", "1分", "1min", "60s")
-  if (min === 2) out.push("两分钟", "2分", "2min", "120秒")
-  if (min === 3) out.push("三分钟", "3分", "180秒")
-  if (min === 4) out.push("四分钟", "4分", "240秒")
+  if (min === 2) out.push("两分钟", "2分", "2min")
+  if (min === 3) out.push("三分钟", "3分")
+  if (min === 4) out.push("四分钟", "4分")
   return out
 }
 
@@ -652,7 +652,15 @@ export function NewProjectChat() {
             {answered && !active ? (
               <p className="mt-0.5 text-xs text-muted-foreground/80">{rowSummary(row, draft, draft.assetIds.length)}</p>
             ) : (
-              renderOptions(row)
+              row === "assets" && assets.length === 0 ? (
+                <div className="mt-3">
+                  <Button type="button" size="sm" onClick={() => finishAnswer("assets")}>
+                    直接进入下一步
+                  </Button>
+                </div>
+              ) : (
+                renderOptions(row)
+              )
             )}
           </div>
           {note?.row === row && (
