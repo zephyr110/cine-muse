@@ -286,6 +286,15 @@ export function NewProjectChat() {
     setInput("")
   }
 
+  /** 「修改」回退编辑：文本行预填现值（避免长文本重打），选项行清空残留输入 */
+  const editRow = (row: RowId) => {
+    setEditId(row)
+    setNote((prev) => (prev?.row === row ? null : prev))
+    const v = row === "title" ? draft.title.trim() : row === "premise" ? draft.premise.trim() : ""
+    setInput(v)
+    inputRef.current?.focus()
+  }
+
   const toggleMulti = (row: RowId, value: string) => {
     if (row === "boost") {
       const list = draft.boostAgentIds
@@ -341,6 +350,11 @@ export function NewProjectChat() {
 
   /** IME 组合态守卫：中文输入法回车不发送 */
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Escape 取消回退编辑，恢复行回答态
+    if (e.key === "Escape" && editId != null) {
+      setEditId(null)
+      return
+    }
     if (e.key === "Enter" && !e.nativeEvent.isComposing) {
       e.preventDefault()
       sendText(input)
@@ -642,7 +656,7 @@ export function NewProjectChat() {
                 <button
                   type="button"
                   aria-label={`修改「${TITLE_TEXT[row]}」`}
-                  onClick={() => { setEditId(row); setNote((prev) => (prev?.row === row ? null : prev)); inputRef.current?.focus() }}
+                  onClick={() => editRow(row)}
                   className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-border/60 hover:text-foreground"
                 >
                   <PencilIcon className="size-3" /> 修改
@@ -673,6 +687,11 @@ export function NewProjectChat() {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 md:p-6">
+      {/* 无障碍播报：当前问题 / 就绪态（视觉隐藏，读屏友好） */}
+      <div aria-live="polite" className="sr-only">
+        {activeId != null ? TITLE_TEXT[activeId] : allDone ? "全部问题已回答，可以创建项目" : ""}
+      </div>
+
       {/* 成片简报（常驻顶部） */}
       <div className="sticky top-0 z-20 flex items-center justify-between gap-3 rounded-lg border bg-card/95 px-3 py-2 backdrop-blur-sm">
         <div className="flex min-w-0 flex-1 items-center gap-2 text-xs text-muted-foreground">

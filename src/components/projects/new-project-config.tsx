@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { EyeIcon, PenLineIcon, SparklesIcon, Wand2Icon, ZapIcon } from "lucide-react"
+import { EyeIcon, PenLineIcon, Wand2Icon, ZapIcon } from "lucide-react"
 
 import { BOOST_SLOTS, GENRE_LIBRARY, STYLE_LIBRARY } from "@/lib/engine/templates"
 import { MODE_LABEL } from "@/lib/types"
@@ -32,11 +32,6 @@ export const STYLES: StyleOption[] = Object.keys(STYLE_LIBRARY).map((id) => ({
 }))
 
 export const DURATIONS = [30, 60, 90, 120, 180, 240]
-
-export const DURATION_ITEMS = DURATIONS.map((d) => ({
-  value: String(d),
-  label: `${d / 60} 分钟`,
-}))
 
 export const QUALITY_ITEMS: { value: NewProjectInput["quality"]; label: string }[] = [
   { value: "draft", label: "草稿 (720p)" },

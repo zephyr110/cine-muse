@@ -1142,6 +1142,8 @@ export function NewProjectChat() {
 }
 ```
 
+> **注意（adjudicated fix waves）**：上方的示例代码发布于 commit `29e2c45`。终审裁定修复了 5 处示例代码缺陷，以 commits `6b9f925`（多选行「继续」确认当前选择——置 touched 标志；note 清除按行收敛；durationAliases 去重；空 chips 容器守卫）与 `f438b21`（durationAliases 残余秒级重复删除；空资产库行「修改」后的逃生按钮）为准。实现以提交代码为最终事实源。
+
 - [ ] **Step 2: 类型检查**
 
 Run: `pnpm exec tsc --noEmit -p tsconfig.json`
