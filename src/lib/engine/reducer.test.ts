@@ -136,4 +136,78 @@ describe("migrateAppState", () => {
     expect(migrated.projects[0]?.stages[0].reviews).toEqual([])
     expect(migrated.projects[0]?.stages[0].references).toBeUndefined()
   })
+
+  it("PREVIS_UNDO 恢复上一次提交的摆位，PREVIS_REDO 重做", () => {
+    const state = stateWithPrevis()
+    const p = state.projects[0]
+    const stg = p.stages[0]
+    const move = (s: AppState, x: number): AppState =>
+      engineReducer(s, {
+        type: "UPDATE_PREVIS_BLOCKING", projectId: p.id, stageId: stg.id, shotIndex: 0, commit: true,
+        blocking: [{ id: "c1", kind: "character", name: "主角", position: [x, 0, 1], rotationY: 0, scale: 1 }],
+      })
+    const s1 = move(state, 1)
+    const s2 = move(s1, 2)
+    expect(shotsOf(s2)[0].blocking[0].position[0]).toBe(2)
+    const undone = engineReducer(s2, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
+    expect(shotsOf(undone)[0].blocking[0].position[0]).toBe(1)
+    const redone = engineReducer(undone, { type: "PREVIS_REDO", projectId: p.id, stageId: stg.id })
+    expect(shotsOf(redone)[0].blocking[0].position[0]).toBe(2)
+    // 撤销到顶后不再变化
+    const undone2 = engineReducer(undone, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
+    expect(shotsOf(undone2)[0].blocking[0].position[0]).toBe(0)
+    const undone3 = engineReducer(undone2, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
+    expect(shotsOf(undone3)[0].blocking[0].position[0]).toBe(0)
+  })
+
+  it("commit=false 的中间帧不产生撤销快照", () => {
+    const state = stateWithPrevis()
+    const p = state.projects[0]
+    const stg = p.stages[0]
+    const s1 = engineReducer(state, {
+      type: "UPDATE_PREVIS_BLOCKING", projectId: p.id, stageId: stg.id, shotIndex: 0, commit: false,
+      blocking: [{ id: "c1", kind: "character", name: "主角", position: [3, 0, 1], rotationY: 0, scale: 1 }],
+    })
+    const undone = engineReducer(s1, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
+    // 无快照 → 撤销无效果
+    expect(shotsOf(undone)[0].blocking[0].position[0]).toBe(3)
+  })
+
+  it("一次逻辑编辑（blocking+camera 组合提交）仅产生一个撤销快照", () => {
+    const state = stateWithPrevis()
+    const p = state.projects[0]
+    const stg = p.stages[0]
+    const s1 = engineReducer(state, {
+      type: "UPDATE_PREVIS_BLOCKING", projectId: p.id, stageId: stg.id, shotIndex: 0, commit: true,
+      blocking: [{ id: "c1", kind: "character", name: "主角", position: [2, 0, 1], rotationY: 0, scale: 1 }],
+    })
+    const s2 = engineReducer(s1, {
+      type: "UPDATE_PREVIS_CAMERA", projectId: p.id, stageId: stg.id, shotIndex: 0, commit: false,
+      camera: { position: [1, 3, 7], target: [0, 1, 0], fov: 45 },
+    })
+    expect(s2.previsUndo.past).toHaveLength(1)
+    // 一次撤销同时还原摆位与机位
+    const undone = engineReducer(s2, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
+    expect(shotsOf(undone)[0].blocking[0].position[0]).toBe(0)
+    expect(shotsOf(undone)[0].camera.position).toEqual([0, 2, 8])
+  })
+
+  it("跨 stage 的撤销不弹出其他 stage 的快照", () => {
+    const state = stateWithPrevis()
+    const p = state.projects[0]
+    const stgA = p.stages[0]
+    const stgB = { ...p.stages[1], agentId: "previs", status: "waiting_approval" as const, artifact: stgA.artifact }
+    const withB = { ...state, projects: [{ ...p, stages: [stgA, stgB, ...p.stages.slice(2)] }] }
+    const s1 = engineReducer(withB, {
+      type: "UPDATE_PREVIS_BLOCKING", projectId: p.id, stageId: stgA.id, shotIndex: 0, commit: true,
+      blocking: [{ id: "c1", kind: "character", name: "主角", position: [2, 0, 1], rotationY: 0, scale: 1 }],
+    })
+    expect(s1.previsUndo.past).toHaveLength(1)
+    // 对 B 撤销：栈顶是 A 的快照 → 不弹出、不丢失
+    const undoneB = engineReducer(s1, { type: "PREVIS_UNDO", projectId: p.id, stageId: stgB.id })
+    expect(undoneB.previsUndo.past).toHaveLength(1)
+    // 对 A 撤销仍可用
+    const undoneA = engineReducer(undoneB, { type: "PREVIS_UNDO", projectId: p.id, stageId: stgA.id })
+    expect(shotsOf(undoneA)[0].blocking[0].position[0]).toBe(0)
+  })
 })

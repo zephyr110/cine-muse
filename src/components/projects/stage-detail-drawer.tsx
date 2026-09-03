@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { LoaderCircleIcon, PenLineIcon, ShieldCheckIcon } from "lucide-react"
+import { LoaderCircleIcon, Maximize2Icon, PenLineIcon, ShieldCheckIcon } from "lucide-react"
 
 import { PolarAngleAxis, RadialBar, RadialBarChart } from "recharts"
 
@@ -21,6 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { STAGE_STATUS_META } from "@/components/projects/workflow-canvas"
 import { PrevisBlockingEditor } from "@/components/projects/previs-blocking-editor"
+import { PrevisFullscreenEditor } from "@/components/projects/previs-fullscreen-editor"
 
 /** 基于 shadcn Chart（RadialBarChart）二次开发：质量分环形图 */
 function ScoreRing({ score }: { score: number }) {
@@ -92,15 +93,22 @@ function PrevisPanel({ projectId, stage, artifact }: { projectId: string; stage:
   const { state } = useApp()
   const project = state.projects.find((p) => p.id === projectId)
   const [editing, setEditing] = React.useState(false)
+  const [fullscreen, setFullscreen] = React.useState(false)
   const [shotIndex, setShotIndex] = React.useState(0)
 
   return (
     <div className="space-y-4">
       {project?.interventionMode === "manual" && stage.status === "waiting_approval" && !editing && (
-        <Button size="sm" variant="outline" className="gap-1" onClick={() => setEditing(true)}>
-          <PenLineIcon className="size-3.5" /> 调整摆位与机位
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" className="gap-1" onClick={() => setEditing(true)}>
+            <PenLineIcon className="size-3.5" /> 调整摆位与机位
+          </Button>
+          <Button size="sm" variant="outline" className="gap-1" onClick={() => setFullscreen(true)}>
+            <Maximize2Icon className="size-3.5" /> 全屏编辑
+          </Button>
+        </div>
       )}
+      {fullscreen && <PrevisFullscreenEditor projectId={projectId} stage={stage} onClose={() => setFullscreen(false)} />}
       {editing ? (
         <PrevisBlockingEditor
           projectId={projectId}
