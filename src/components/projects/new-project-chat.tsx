@@ -113,12 +113,16 @@ function optionsFor(row: RowId, draft: Draft, assets: NewProjectChatAssets): Opt
 
 function durationAliases(d: number): string[] {
   const min = d / 60
-  const out: string[] = [`${d}秒`, `${min}分钟`]
-  if (min === 0.5) out.push("半分钟", "30s")
-  if (min === 1) out.push("1分钟", "一分钟", "1分", "1min", "60s")
-  if (min === 2) out.push("2分钟", "两分钟", "2分", "2min", "120秒")
-  if (min === 3) out.push("3分钟", "三分钟", "3分", "180秒")
-  if (min === 4) out.push("4分钟", "四分钟", "4分", "240秒")
+  const out: string[] = [`${d}秒`]
+  if (min === 0.5) {
+    out.push("0.5分钟", "半分钟", "30s")
+    return out
+  }
+  out.push(`${min}分钟`)
+  if (min === 1) out.push("一分钟", "1分", "1min", "60s")
+  if (min === 2) out.push("两分钟", "2分", "2min", "120秒")
+  if (min === 3) out.push("三分钟", "3分", "180秒")
+  if (min === 4) out.push("四分钟", "4分", "240秒")
   return out
 }
 
@@ -278,7 +282,7 @@ export function NewProjectChat() {
 
   const finishAnswer = (row: RowId) => {
     if (editId === row) setEditId(null)
-    setNote(null)
+    setNote((prev) => (prev?.row === row ? null : prev))
     setInput("")
   }
 
@@ -329,6 +333,7 @@ export function NewProjectChat() {
     if (activeId === "boost" || activeId === "assets") {
       toggleMulti(activeId, matched)
       setInput("")
+      setNote((prev) => (prev?.row === activeId ? null : prev))
       return
     }
     answerSingle(activeId, matched)
@@ -529,7 +534,7 @@ export function NewProjectChat() {
           </div>
           <div className="flex items-center justify-between">
             <p className="text-[11px] text-muted-foreground">完整流水线已包含的风格设定/场景等环节会自动去重跳过</p>
-            <Button type="button" size="sm" onClick={() => finishAnswer("boost")}>
+            <Button type="button" size="sm" onClick={() => { setBoostTouched(true); finishAnswer("boost") }}>
               继续
             </Button>
           </div>
@@ -581,7 +586,7 @@ export function NewProjectChat() {
               <Button type="button" size="sm" variant="ghost" onClick={() => { patch({ assetIds: [] }); setAssetsTouched(true); finishAnswer("assets") }}>
                 暂不绑定，跳过
               </Button>
-              <Button type="button" size="sm" onClick={() => finishAnswer("assets")}>
+              <Button type="button" size="sm" onClick={() => { setAssetsTouched(true); finishAnswer("assets") }}>
                 继续
               </Button>
             </div>
@@ -591,6 +596,7 @@ export function NewProjectChat() {
     }
     // chips 单选行：genre / duration / aspect / quality
     const opts = optionsFor(row, draft, assets)
+    if (opts.length === 0) return null
     const current = row === "duration" ? (draft.durationSec != null ? String(draft.durationSec) : null)
       : row === "quality" ? draft.quality
       : row === "aspect" ? draft.aspectRatio
@@ -636,7 +642,7 @@ export function NewProjectChat() {
                 <button
                   type="button"
                   aria-label={`修改「${TITLE_TEXT[row]}」`}
-                  onClick={() => { setEditId(row); setNote(null); inputRef.current?.focus() }}
+                  onClick={() => { setEditId(row); setNote((prev) => (prev?.row === row ? null : prev)); inputRef.current?.focus() }}
                   className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-border/60 hover:text-foreground"
                 >
                   <PencilIcon className="size-3" /> 修改
