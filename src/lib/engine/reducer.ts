@@ -22,11 +22,15 @@ import { MODE_LABEL } from "@/lib/types"
 import type {
   Action,
   AppState,
+  BlockingItem,
   EngineEvent,
   PrevisUndoSnapshot,
   Project,
   WorkflowStage,
 } from "@/lib/types"
+
+/** 数据形态版本：v2 = BlockingItem 全 3D 变换（rotation 欧拉 / scale 向量 / y 有效） */
+export const DATA_VERSION = 2
 
 export const STORAGE_KEY = "cine-muse-state-v2"
 export const LEGACY_STORAGE_KEY = "cine-muse-state-v1"
@@ -74,28 +78,78 @@ function normalizeState(s: AppState): AppState {
 }
 
 /** 客户端惰性初始化：固定种子状态（SSR 与首帧一致）。
- * localStorage/SQLite 恢复由 store 的引导 effect 在水合后异步完成并 dispatch HYDRATE。 */
+ * localStorage/SQLite 恢复由 store 的引导 effect 在水合后异步完成并 dispatch HYDRATE。
+ * createSeedState 自带 version: DATA_VERSION（reducer.ts:78 委托同一路径）。 */
 export function createInitialState(): AppState {
   return createSeedState()
 }
 
-/** v1 → v2：旧数据结构缺少 references 等新字段，直接补默认值即可兼容。
+/** v1 blocking 项 → v2（旧 rotationY 标量 + scale 标量 → 欧拉/向量），v2 起原样保留 */
+function migrateBlockingItemV2(item: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...item }
+  if (typeof next.rotationY === "number") {
+    const r = next.rotationY
+    next.rotation = [0, r, 0]
+    delete next.rotationY
+  }
+  if (typeof next.scale === "number") {
+    const s = next.scale
+    next.scale = [s, s, s]
+  }
+  return next
+}
+
+/** v1 撤销栈中的 blocking 快照 → v2（与产物同规则）：旧栈残留 v1 项会在撤销时污染 v2 镜头 */
+function migratePrevisUndoV2(u: AppState["previsUndo"]): AppState["previsUndo"] {
+  const conv = (snaps: PrevisUndoSnapshot[]) =>
+    snaps.map((sn) => ({
+      ...sn,
+      shots: sn.shots.map((sh) => ({
+        ...sh,
+        blocking: sh.blocking.map(
+          (b) => migrateBlockingItemV2(b as unknown as Record<string, unknown>) as unknown as BlockingItem,
+        ),
+      })),
+    }))
+  return { past: conv(u.past), future: conv(u.future) }
+}
+
+/** 版本化迁移：v1 → v2 补字段默认值（references 等）并将 previs blocking 项升为全 3D 形状。
  * 合并基准为 createInitialState()：旧数据缺顶层字段时回落到种子默认，已有字段原样保留。
- * 幂等 —— v2 数据再次经过本函数结果不变，可在任意持久化源上安全调用。 */
+ * 幂等 —— 当前版本（DATA_VERSION）数据再次经过本函数结果不变，可在任意持久化源上安全调用。 */
 export function migrateAppState(raw: unknown): AppState {
   const s = raw as Partial<AppState> | null
+  const version = s?.version ?? 1
+  let projects = (s?.projects ?? []).map((p) => ({
+    ...p,
+    stages: (p.stages ?? []).map((st) => ({
+      ...st,
+      references: st.references ?? undefined,
+      iterations: st.iterations ?? [],
+      reviews: st.reviews ?? [],
+    })),
+  }))
+  if (version < 2) {
+    projects = projects.map((p) => ({
+      ...p,
+      stages: (p.stages ?? []).map((st) => {
+        const a = st.artifact as { kind?: string; shots?: { blocking?: Record<string, unknown>[] }[] } | undefined
+        if (a?.kind === "previs" && Array.isArray(a.shots)) {
+          // shots 数组与 Artifact.shots?: number 冲突：仿测试夹具经 unknown 收窄（引擎内以 isPrevisArtifact 运行时判别恢复语义）
+          const artifact = { ...a, shots: a.shots.map((sh) => ({ ...sh, blocking: (sh.blocking ?? []).map(migrateBlockingItemV2) })) } as unknown as WorkflowStage["artifact"]
+          return { ...st, artifact }
+        }
+        return st
+      }),
+    }))
+  }
   return {
     ...createInitialState(),
     ...(s ?? {}),
-    projects: (s?.projects ?? []).map((p) => ({
-      ...p,
-      stages: (p.stages ?? []).map((st) => ({
-        ...st,
-        references: st.references ?? undefined,
-        iterations: st.iterations ?? [],
-        reviews: st.reviews ?? [],
-      })),
-    })),
+    version: DATA_VERSION,
+    projects,
+    // v1 栈内含 v1 形状 blocking 快照：撤销时会直接写回镜头 blocking，须与产物同规则转换
+    ...(version < 2 && s?.previsUndo ? { previsUndo: migratePrevisUndoV2(s.previsUndo) } : {}),
   } as AppState
 }
 

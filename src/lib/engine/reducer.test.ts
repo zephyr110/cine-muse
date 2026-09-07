@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { engineReducer, createInitialState, migrateAppState } from "./reducer"
 import { makePrevisShot } from "./previs-types"
 import { renderPrevisShot } from "./previs-render"
-import type { AppState, Artifact, PrevisShot } from "@/lib/types"
+import type { AppState, Artifact, BlockingItem, PrevisShot } from "@/lib/types"
 
 /** 构造含 previs 产物（首镜已渲染三图，rendered=false 时为未渲染空镜头）的项目状态：stages[0] 替换为 previs 环节 */
 function stateWithPrevis(rendered = true): AppState {
@@ -42,7 +42,7 @@ describe("previs reducer", () => {
     const stg = p.stages[0]
     const next = engineReducer(state, {
       type: "UPDATE_PREVIS_BLOCKING", projectId: p.id, stageId: stg.id, shotIndex: 0,
-      blocking: [{ id: "c1", kind: "character", name: "主角", position: [3, 0, 1], rotationY: 90, scale: 1 }],
+      blocking: [{ id: "c1", kind: "character", name: "主角", position: [3, 0, 1], rotation: [0, 90, 0], scale: [1, 1, 1] }],
     })
     const out = shotsOf(next)[0]
     expect(out.blocking[0].position[0]).toBe(3)
@@ -137,6 +137,60 @@ describe("migrateAppState", () => {
     expect(migrated.projects[0]?.stages[0].references).toBeUndefined()
   })
 
+  it("v1 previs blocking 迁移到 v2 全 3D 形状（rotation/scale 向量化）", () => {
+    const legacy = {
+      version: 1,
+      projects: [
+        {
+          id: "p1",
+          stages: [
+            {
+              id: "s1",
+              agentId: "previs",
+              artifact: {
+                kind: "previs",
+                shots: [
+                  {
+                    shotIndex: 0,
+                    camera: { position: [0, 2, 8], target: [0, 1, 0], fov: 45 },
+                    blocking: [
+                      { id: "c1", kind: "character", name: "主角", position: [0, 0, 1], rotationY: 90, scale: 1.2 },
+                      { id: "t1", kind: "terrain", name: "地形", position: [0, 0, 0], rotationY: 0, scale: 1 },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    }
+    const migrated = migrateAppState(legacy as unknown)
+    const shot = (migrated.projects[0]?.stages[0]?.artifact as unknown as { shots: { blocking: BlockingItem[] }[] }).shots[0]
+    const char = shot.blocking.find((b) => b.kind === "character")!
+    expect(char.rotation).toEqual([0, 90, 0])
+    expect(char.scale).toEqual([1.2, 1.2, 1.2])
+    expect(char).not.toHaveProperty("rotationY")
+    expect(migrated.version).toBe(2)
+  })
+
+  it("v1 previs 撤销栈中的 blocking 快照同样迁移为 v2（撤销不会回灌旧形状）", () => {
+    const legacy = {
+      version: 1,
+      projects: [],
+      previsUndo: {
+        past: [{ stageId: "s1", shots: [{ shotIndex: 0, blocking: [{ id: "c1", kind: "character", name: "主角", position: [1, 0, 1], rotationY: 45, scale: 2 }], camera: { position: [0, 2, 8], target: [0, 1, 0], fov: 45 } }] }],
+        future: [],
+      },
+    }
+    const migrated = migrateAppState(legacy as unknown)
+    const snap = migrated.previsUndo.past[0]
+    const item = snap?.shots[0]?.blocking[0]
+    expect(item?.rotation).toEqual([0, 45, 0])
+    expect(item?.scale).toEqual([2, 2, 2])
+    expect(item).not.toHaveProperty("rotationY")
+  })
+
   it("PREVIS_UNDO 恢复上一次提交的摆位，PREVIS_REDO 重做", () => {
     const state = stateWithPrevis()
     const p = state.projects[0]
@@ -144,7 +198,7 @@ describe("migrateAppState", () => {
     const move = (s: AppState, x: number): AppState =>
       engineReducer(s, {
         type: "UPDATE_PREVIS_BLOCKING", projectId: p.id, stageId: stg.id, shotIndex: 0, commit: true,
-        blocking: [{ id: "c1", kind: "character", name: "主角", position: [x, 0, 1], rotationY: 0, scale: 1 }],
+        blocking: [{ id: "c1", kind: "character", name: "主角", position: [x, 0, 1], rotation: [0, 0, 0], scale: [1, 1, 1] }],
       })
     const s1 = move(state, 1)
     const s2 = move(s1, 2)
@@ -166,7 +220,7 @@ describe("migrateAppState", () => {
     const stg = p.stages[0]
     const s1 = engineReducer(state, {
       type: "UPDATE_PREVIS_BLOCKING", projectId: p.id, stageId: stg.id, shotIndex: 0, commit: false,
-      blocking: [{ id: "c1", kind: "character", name: "主角", position: [3, 0, 1], rotationY: 0, scale: 1 }],
+      blocking: [{ id: "c1", kind: "character", name: "主角", position: [3, 0, 1], rotation: [0, 0, 0], scale: [1, 1, 1] }],
     })
     const undone = engineReducer(s1, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
     // 无快照 → 撤销无效果
@@ -179,7 +233,7 @@ describe("migrateAppState", () => {
     const stg = p.stages[0]
     const s1 = engineReducer(state, {
       type: "UPDATE_PREVIS_BLOCKING", projectId: p.id, stageId: stg.id, shotIndex: 0, commit: true,
-      blocking: [{ id: "c1", kind: "character", name: "主角", position: [2, 0, 1], rotationY: 0, scale: 1 }],
+      blocking: [{ id: "c1", kind: "character", name: "主角", position: [2, 0, 1], rotation: [0, 0, 0], scale: [1, 1, 1] }],
     })
     const s2 = engineReducer(s1, {
       type: "UPDATE_PREVIS_CAMERA", projectId: p.id, stageId: stg.id, shotIndex: 0, commit: false,
@@ -200,7 +254,7 @@ describe("migrateAppState", () => {
     const withB = { ...state, projects: [{ ...p, stages: [stgA, stgB, ...p.stages.slice(2)] }] }
     const s1 = engineReducer(withB, {
       type: "UPDATE_PREVIS_BLOCKING", projectId: p.id, stageId: stgA.id, shotIndex: 0, commit: true,
-      blocking: [{ id: "c1", kind: "character", name: "主角", position: [2, 0, 1], rotationY: 0, scale: 1 }],
+      blocking: [{ id: "c1", kind: "character", name: "主角", position: [2, 0, 1], rotation: [0, 0, 0], scale: [1, 1, 1] }],
     })
     expect(s1.previsUndo.past).toHaveLength(1)
     // 对 B 撤销：栈顶是 A 的快照 → 不弹出、不丢失

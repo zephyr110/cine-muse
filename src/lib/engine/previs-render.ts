@@ -76,8 +76,8 @@ export function renderPreviewSvg(
     if (b.kind === "terrain") {
       parts.push(`<rect x="${x - 96}" y="${y - 96}" width="192" height="192" rx="8" fill="#e4e4e7" stroke="#a1a1aa" data-kind="terrain"/>`)
     } else if (b.kind === "character") {
-      const dx = Math.sin(b.rotationY) * 16
-      const dy = -Math.cos(b.rotationY) * 16
+      const dx = Math.sin(b.rotation[1]) * 16
+      const dy = -Math.cos(b.rotation[1]) * 16
       parts.push(
         `<g data-kind="character"><circle cx="${x}" cy="${y}" r="12" fill="#6366f1"/><line x1="${x}" y1="${y}" x2="${x + dx}" y2="${y + dy}" stroke="#fff" stroke-width="2"/></g>`,
       )

@@ -103,8 +103,9 @@ function buildMesh(item: BlockingItem): THREE.Object3D {
     g.userData.itemId = item.id
     const [x, , z] = item.position
     g.position.set(x, 0, z)
-    g.rotation.y = item.rotationY
-    g.scale.setScalar(item.scale)
+    const [rx, ry, rz] = item.rotation
+    g.rotation.set(rx * DEG, ry * DEG, rz * DEG)
+    g.scale.set(...item.scale)
     return g
   }
   let geo: THREE.BufferGeometry
@@ -118,8 +119,9 @@ function buildMesh(item: BlockingItem): THREE.Object3D {
   mesh.userData.itemId = item.id
   const [x, y, z] = item.position
   mesh.position.set(x, y + (item.kind === "terrain" ? 0 : 1), z)
-  mesh.rotation.y = item.rotationY
-  mesh.scale.setScalar(item.scale)
+  const [rx, ry, rz] = item.rotation
+  mesh.rotation.set(rx * DEG, ry * DEG, rz * DEG)
+  mesh.scale.set(...item.scale)
   return mesh
 }
 
@@ -302,8 +304,9 @@ export const PrevisViewport = React.forwardRef<
       mesh.userData.rigKey = rigKey
       const [x, y, z] = item.position
       mesh.position.set(x, y + (item.kind === "terrain" ? 0 : 1), z)
-      mesh.rotation.y = item.rotationY
-      mesh.scale.setScalar(item.scale)
+      const [rx, ry, rz] = item.rotation
+      mesh.rotation.set(rx * DEG, ry * DEG, rz * DEG)
+      mesh.scale.set(...item.scale)
     }
     for (const [id, mesh] of [...st.itemMeshes]) {
       if (!keep.has(id)) {
