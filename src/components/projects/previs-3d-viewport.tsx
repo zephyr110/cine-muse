@@ -258,6 +258,7 @@ function buildCameraRig(): THREE.Group {
   const a = 0.2 * s
   const b = 0.2 * s
   const c = 0.5 * s
+  // 角点编号 = 二进制序（循环 sx 外层、sz 内层：sx>0 时 +4，sy>0 时 +2，sz>0 时 +1）；idx 每对相邻角点 = 一条棱
   const corners: [number, number, number][] = []
   for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) corners.push([sx * a, sy * b, sz * c])
   const idx = [[0, 1], [0, 2], [1, 3], [2, 3], [4, 5], [4, 6], [5, 7], [6, 7], [0, 4], [1, 5], [2, 6], [3, 7]]
@@ -289,7 +290,6 @@ function buildCameraRig(): THREE.Group {
     new THREE.BoxGeometry(0.8 * s, 0.8 * s, 1.6 * s),
     new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 }),
   )
-  hit.userData.cameraHit = true
   g.add(hit)
   return g
 }
@@ -516,6 +516,16 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         .addEventListener("commit", () => applyGizmoFrame(true))
       scene.add(gizmoHelper)
 
+      // TransformControls r185.1 不监听 pointercancel/lostpointercapture：触控被系统取消的
+      // gizmo 拖拽会让 dragging 卡死 → 手动补派发 dragging-changed:false（既有 handler 恢复轨道）
+      const releaseGizmoDrag = () => {
+        const s = stateRef.current
+        if (!s || !s.gizmo.dragging) return
+        s.gizmo.dispatchEvent({ type: "dragging-changed", value: false })
+      }
+      renderer.domElement.addEventListener("pointercancel", releaseGizmoDrag)
+      renderer.domElement.addEventListener("lostpointercapture", releaseGizmoDrag)
+
       const st = {
         renderer, scene, camera, controls,
         itemMeshes: new Map<string, THREE.Object3D>(),
@@ -568,6 +578,8 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       return () => {
         cancelAnimationFrame(st.raf)
         ro.disconnect()
+        renderer.domElement.removeEventListener("pointercancel", releaseGizmoDrag)
+        renderer.domElement.removeEventListener("lostpointercapture", releaseGizmoDrag)
         controls.enabled = true // 兜底：卸载时若仍被拖拽禁用，恢复避免污染其他视口
         gizmo.dispose()
         controls.dispose()
@@ -679,12 +691,24 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       for (const item of propsRef.current.items) {
         const mesh = st.itemMeshes.get(item.id)
         if (!mesh) continue
+        // 仅角色挂名字标签（机位 rig 的「机位N」标签另设）；非角色如残留旧标签一并摘除并清引用
+        if (item.kind !== "character") {
+          const stale = mesh.userData.labelObj as CSS2DObject | undefined
+          if (stale) {
+            removeCSS2DLabel(stale)
+            mesh.remove(stale)
+            mesh.userData.labelObj = null
+          }
+          continue
+        }
         let label = mesh.userData.labelObj as CSS2DObject | undefined
         if (!label) {
           label = new CSS2DObject(makeLabelEl(item.name))
           mesh.add(label)
           mesh.userData.labelObj = label
         }
+        // items 身份变化（重命名等）时同步标签文本
+        label.element.textContent = item.name
         // 运行时按当前包围盒顶重算锚点（缩放/替换后仍贴头顶）
         label.position.y = labelLocalY(mesh)
         label.visible = true
@@ -721,7 +745,11 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       const director = propsRef.current.viewMode === "director"
       while (st.rigGroup.children.length > shots.length) {
         const o = st.rigGroup.children.pop()
-        if (o) st.rigGroup.remove(o)
+        if (o) {
+          // 释放线框几何/材质（shots 收缩弹出 rig 时防 GPU 缓冲泄漏）
+          disposeObject(o)
+          st.rigGroup.remove(o)
+        }
       }
       st.rigGroup.visible = director
       shots.forEach((shot, i) => {
@@ -760,22 +788,26 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       const st = stateRef.current
       if (!st) return
       const shot = propsRef.current.shots[propsRef.current.shotIndex]
-      if (propsRef.current.viewMode === "camera" && shot) {
-        const cam = shot.camera
+      if (propsRef.current.viewMode === "camera") {
         // 进入机位视角前定格导演位姿（仅当从导演态进入；camera 内切换 shot 不覆盖快照）
         if (!st.inCameraView) {
           st.directorView = { pos: st.camera.position.clone(), target: st.controls.target.clone(), fov: st.camera.fov }
           st.inCameraView = true
         }
-        // 清掉轨道阻尼残留，防止禁用期间 update 改写机位
-        const c = st.controls as unknown as { _sphericalDelta?: { set: (a: number, b: number, c: number) => void }; _panOffset?: { set: (a: number, b: number, c: number) => void } }
-        c._sphericalDelta?.set(0, 0, 0)
-        c._panOffset?.set(0, 0, 0)
-        st.camera.position.set(...cam.position)
-        st.controls.target.set(...cam.target)
-        st.camera.fov = cam.fov
-        st.camera.lookAt(st.controls.target)
-        st.camera.updateProjectionMatrix()
+        const cam = shot?.camera
+        if (cam) {
+          // 清掉轨道阻尼残留，防止禁用期间 update 改写机位
+          const c = st.controls as unknown as { _sphericalDelta?: { set: (a: number, b: number, c: number) => void }; _panOffset?: { set: (a: number, b: number, c: number) => void } }
+          c._sphericalDelta?.set(0, 0, 0)
+          c._panOffset?.set(0, 0, 0)
+          st.camera.position.set(...cam.position)
+          st.controls.target.set(...cam.target)
+          st.camera.fov = cam.fov
+          st.camera.lookAt(st.controls.target)
+          st.camera.updateProjectionMatrix()
+        }
+        // shotIndex 无对应分镜（shots 未就绪/越界）：保持相机于导演位姿、轨道保持禁用——
+        // 不落入导演分支（不重开环绕、不覆盖导演快照）
         st.controls.enabled = false
       } else {
         st.inCameraView = false
@@ -886,7 +918,8 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         const id = st.dragId
         st.dragId = null
         st.dragArmed = false
-        st.controls.enabled = true
+        // 恢复轨道：camera 模式或 gizmo 激活时保持禁用（与 dragging-changed handler 同一判定）
+        st.controls.enabled = propsRef.current.viewMode !== "camera" && !st.gizmoActive
         if (st.renderer.domElement.hasPointerCapture(e.pointerId)) {
           st.renderer.domElement.releasePointerCapture(e.pointerId)
         }
@@ -917,7 +950,8 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       }
       st.downAt = null
       st.dragArmed = false
-      if (!wasDragging) st.controls.enabled = true
+      // 未拖过阈值的收尾同样按 camera/gizmo 判定恢复（camera 模式不重开环绕）
+      if (!wasDragging) st.controls.enabled = propsRef.current.viewMode !== "camera" && !st.gizmoActive
     }
 
     /** 已 armed 但未过阈值的指针移出画布（未捕获）→ 中止本次手势，避免轨道被锁死 */
@@ -926,7 +960,8 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       if (!st || st.dragging || !st.dragArmed) return
       st.downAt = null
       st.dragArmed = false
-      st.controls.enabled = true
+      // camera 模式 / gizmo 激活下维持禁用
+      st.controls.enabled = propsRef.current.viewMode !== "camera" && !st.gizmoActive
     }
 
     /** 轴向快照视图（右键上角 gizmo 6 按钮调用；仅 director 生效） */
@@ -984,6 +1019,9 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
             s.camera.fov = prevFov
             s.camera.aspect = prevAspect
             s.camera.updateProjectionMatrix()
+            // capture 期间相机朝向 shot target；camera 模式（轨道禁用）不会自动回正——
+            // 重瞄恢复后的 target，避免可见帧滞后一次朝向
+            s.camera.lookAt(prevTarget)
           }
         }
         const read = (): string => {
