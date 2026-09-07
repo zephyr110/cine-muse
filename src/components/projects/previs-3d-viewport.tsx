@@ -513,11 +513,13 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       scene.add(gizmoHelper)
 
       // TransformControls r185.1 不监听 pointercancel/lostpointercapture：触控被系统取消的
-      // gizmo 拖拽会让 dragging 卡死 → 手动补派发 dragging-changed:false（既有 handler 恢复轨道）
+      // gizmo 拖拽会让 dragging 卡死 → 直接置 s.gizmo.dragging = false：该属性经 defineProperty
+      // 定义，setter 会复位内部 plane/gizmo 拖拽状态并派发 dragging-changed + change——
+      // 既有 dragging-changed handler 由此恢复轨道并补发 commit 终帧（单派发事件不会复位内部状态）
       const releaseGizmoDrag = () => {
         const s = stateRef.current
         if (!s || !s.gizmo.dragging) return
-        s.gizmo.dispatchEvent({ type: "dragging-changed", value: false })
+        s.gizmo.dragging = false
       }
       renderer.domElement.addEventListener("pointercancel", releaseGizmoDrag)
       renderer.domElement.addEventListener("lostpointercapture", releaseGizmoDrag)

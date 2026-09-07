@@ -111,15 +111,15 @@ raycast 命中任意叶子网格后**上溯** `userData.itemId` 所属祖先 Gro
 
 ### 5.5 角色/机位名字标签
 
-`CSS2DRenderer`（three addons，DOM 层自动不进 canvas 导出）圆角药丸标签浮于角色与机位 rig 上方；随距离缩放（distanceFactor 语义）；开关沿用右面板或标签内小控件（保底：跟随现有场景内标签开关——若无则加右面板开关）。
+`CSS2DRenderer`（three addons，DOM 层自动不进 canvas 导出）圆角药丸标签浮于角色与机位 rig 上方；随距离缩放（distanceFactor 语义）——实现采用恒定尺寸药丸标签（可读性优先，不随距离缩放；CSS2D 不进导出）；开关沿用右面板或标签内小控件（保底：跟随现有场景内标签开关——若无则加右面板开关）。
 
 ### 5.6 方向 gizmo（右上）
 
-画布右上角：±X/±Y/±Z 六个 DOM 命中按钮 + 视觉轴指示（浅红/绿/蓝），点击 = 相机沿该轴**等距**（当前轨道距离）重定位并 lookAt target；机位视角下点击自动切回导演视角后执行。
+画布右上角：±X/±Y/±Z 六个 DOM 命中按钮 + 视觉轴指示（浅红/绿/蓝），点击 = 相机沿该轴**等距**（当前轨道距离）重定位并 lookAt target；机位视角下 gizmo 隐藏。
 
 ## 6. 2D 三图渲染适配（全 3D 投影）
 
-- `previs-render.ts`（布景/深度/边缘 SVG）升级为感知 v2 数据：`rotation` 任意轴/`scale` 非等比/`position.y`——足迹=旋转后包围盒、深度带按 y 与包围盒、边缘线按旋转后轮廓投影
+- `previs-render.ts`（布景/深度/边缘 SVG）升级为感知 v2 数据：`rotation` 任意轴/`scale` 非等比/`position.y`——足迹=按 rotation[1]（yaw）旋转后的包围盒、深度带按 y 与包围盒、边缘线按旋转后轮廓投影
 - SVG 与 3D 同源：任何 v2 数据在两处呈现一致（引擎层纯函数，可单测）
 - 导出捕获：TransformControls/gizmo、机位 rig、网格/地面、名字标签一律不进导出图（现 `userData.hideFromViewportCapture` 机制扩展；CSS2D 天然排除）
 

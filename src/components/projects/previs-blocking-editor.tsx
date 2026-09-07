@@ -441,7 +441,7 @@ function BlockingShotEditor({
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!dragId || !e.currentTarget.hasPointerCapture(e.pointerId)) return
     const { x, z } = worldFromEvent(e)
-    setItems((prev) => prev.map((b) => (b.id === dragId ? { ...b, position: [x, 0, z] } : b)))
+    setItems((prev) => prev.map((b) => (b.id === dragId ? { ...b, position: [x, b.position[1], z] } : b)))
   }
 
   const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -459,8 +459,8 @@ function BlockingShotEditor({
             ...b,
             position:
               axis === 0
-                ? ([round2(clamp(value, range)), 0, b.position[2]] as [number, number, number])
-                : ([b.position[0], 0, round2(clamp(value, range))] as [number, number, number]),
+                ? ([round2(clamp(value, range)), b.position[1], b.position[2]] as [number, number, number])
+                : ([b.position[0], b.position[1], round2(clamp(value, range))] as [number, number, number]),
           }
         : b,
     )
@@ -515,7 +515,7 @@ function BlockingShotEditor({
               ...b,
               position: [
                 round2(clamp(b.position[0] + d[0], X_RANGE)),
-                0,
+                b.position[1],
                 round2(clamp(b.position[2] + d[1], Z_RANGE)),
               ],
             }
@@ -628,7 +628,8 @@ function BlockingShotEditor({
 
   /** 复制/粘贴/撤销/重做/删除的共享实现（工具条按钮与快捷键同一通路） */
   const copySelected = () => {
-    if (selectedItem) setClipboard(selectedItem)
+    // 地形不可复制：地面为布景单例，粘贴副本无法删除（removeSelected 同样守卫）
+    if (selectedItem && selectedItem.kind !== "terrain") setClipboard(selectedItem)
   }
   const pasteClipboard = () => {
     const source = clipboard
