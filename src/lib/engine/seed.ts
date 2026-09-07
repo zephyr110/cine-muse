@@ -15,6 +15,7 @@ import type {
   Project,
   WorkflowStage,
 } from "@/lib/types"
+import { DATA_VERSION } from "@/lib/engine/reducer"
 
 let seq = 0
 export function uid(prefix = "id"): string {
@@ -348,6 +349,7 @@ export function createSeedState(): AppState {
   const fogHarbor = buildFogHarborProject()
   const summer = buildSummerLetterProject()
   return {
+    version: DATA_VERSION, // 与 reducer 单一来源（循环 import 仅运行时函数内取值，安全）
     assets: SEED_ASSETS,
     projects: [stardust, fogHarbor, summer],
     events: buildSeedEvents([stardust, fogHarbor]),

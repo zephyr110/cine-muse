@@ -5,12 +5,19 @@ import {
   CameraIcon,
   ClipboardIcon,
   CopyIcon,
-  EyeIcon,
+  FrameIcon,
+  ImageIcon,
+  Move3dIcon,
+  OrbitIcon,
   Redo2Icon,
+  Rotate3dIcon,
   RotateCcwIcon,
+  Scale3dIcon,
   Undo2Icon,
+  UserPlusIcon,
 } from "lucide-react"
 
+import { toast } from "@/components/ui/toast"
 import { useApp } from "@/lib/store"
 import { injectMarkerIds, renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { isPrevisArtifact } from "@/lib/engine/previs-types"
@@ -26,11 +33,14 @@ import type { BlockingItem, PrevisShot, WorkflowStage } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
+  PALETTE,
   PrevisViewport,
   type CaptureResult,
   type MapAspect,
   type OrbitPreview,
   type PrevisViewportHandle,
+  type TransformMode,
+  type ViewMode,
 } from "./previs-3d-viewport"
 
 /** 与 previs-render 俯视投影一致：480×270 画布、48px/世界单位（z 向上） */
@@ -46,6 +56,8 @@ const FOV_RANGE = { min: 5, max: 150 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100
 const clamp = (v: number, r: { min: number; max: number }) => Math.min(r.max, Math.max(r.min, v))
+/** 布景项 id：时间戳 + 随机后缀（新增/粘贴角色唯一） */
+const randomItemId = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
 
 /**
  * 数值输入（带字符串缓冲）：空输入不提交（避免 Number("")===0 钉到 0），
@@ -118,14 +130,186 @@ function FrameOverlay({ aspect }: { aspect: MapAspect }) {
   )
 }
 
+/** 画幅 → 宽高比数值（3D 画布 letterbox 与视口相机锁定共用） */
+const ASPECT_RATIO: Record<MapAspect, number> = { "16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1 }
+
+/** 新增角色的 8 色盘轮转：取未被现有角色显式占用（kind=character 且带 color）的第一色 */
+const nextPaletteColor = (items: BlockingItem[]): string => {
+  const used = new Set(
+    items
+      .filter((b) => b.kind === "character")
+      .map((b) => b.color)
+      .filter((c): c is string => !!c),
+  )
+  return PALETTE.find((c) => !used.has(c)) ?? PALETTE[(items.length + 1) % PALETTE.length]
+}
+
+/** pill 工具条圆按钮：hover 浮出小字提示；active 表变换模式选中 */
+function ModeButton({
+  active, icon, label, onClick,
+}: {
+  active?: boolean
+  icon: React.ReactNode
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onClick}
+      className={cn(
+        "group relative flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground",
+        active && "bg-primary/15 text-primary hover:bg-primary/15 hover:text-primary",
+      )}
+    >
+      {icon}
+      <span className="pointer-events-none invisible absolute -top-8 left-1/2 -translate-x-1/2 rounded-full bg-foreground px-2 py-0.5 text-[10px] whitespace-nowrap text-background opacity-0 transition-opacity group-hover:visible group-hover:opacity-100">
+        {label}
+      </span>
+    </button>
+  )
+}
+
+/**
+ * 变换数值输入（精确输入）：输入期间只改本地暂存，blur/Enter 才提交（撤销单步）；
+ * 未聚焦且未被用户编辑时跟随外部值（gizmo 拖拽终帧 / undo 后一次刷新——中间帧不写回，
+ * 故拖动过程不抖动）；脏值不丢——blur 提交的是用户最后输入值。
+ */
+function TransformField({
+  value, step, onCommit, ariaLabel,
+}: {
+  value: number
+  step: number
+  onCommit: (v: number) => void
+  ariaLabel: string
+}) {
+  const [text, setText] = React.useState(String(value))
+  const [dirty, setDirty] = React.useState(false)
+  const [focused, setFocused] = React.useState(false)
+  const [last, setLast] = React.useState(value)
+  // 渲染期派生状态（React 官方模式）：外部值变化且未在编辑 → 跟随一次
+  if (!focused && !dirty && value !== last) {
+    setLast(value)
+    setText(String(value))
+  }
+  const commit = () => {
+    setFocused(false)
+    if (!dirty) return
+    setDirty(false)
+    const n = Number(text)
+    if (text === "" || !Number.isFinite(n)) {
+      setText(String(last)) // 非法输入 → 回显原值，不提交
+      return
+    }
+    const v = Math.round(n * 100) / 100
+    if (v !== last) onCommit(v)
+    setLast(v)
+    setText(String(v))
+  }
+  return (
+    <input
+      type="number"
+      step={step}
+      value={text}
+      aria-label={ariaLabel}
+      onFocus={() => {
+        setFocused(true)
+        setText(String(last))
+      }}
+      onChange={(e) => {
+        setDirty(true)
+        setText(e.target.value)
+      }}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault()
+          commit()
+        } else if (e.key === "Escape") {
+          setDirty(false)
+          setText(String(last))
+        }
+      }}
+      className="h-7 w-full rounded border border-border bg-background px-1.5 text-right text-xs tabular-nums outline-none focus:border-ring"
+    />
+  )
+}
+
+/** 右栏「变换」分组：位置/旋转/缩放 X Y Z 数值行 + 角色标签开关 */
+function TransformGroup({
+  item, showLabels, onShowLabelsChange, onChange,
+}: {
+  item: BlockingItem
+  showLabels: boolean
+  onShowLabelsChange: (v: boolean) => void
+  onChange: (patch: {
+    position?: [number, number, number]
+    rotation?: [number, number, number]
+    scale?: [number, number, number]
+  }) => void
+}) {
+  const rows: { label: string; field: "position" | "rotation" | "scale"; values: [number, number, number] }[] = [
+    { label: "位置", field: "position", values: item.position },
+    { label: "旋转", field: "rotation", values: item.rotation },
+    { label: "缩放", field: "scale", values: item.scale },
+  ]
+  return (
+    <div className="space-y-1.5 rounded-md border border-border/60 p-2.5">
+      <p className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+        变换 · {item.name}
+        <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">
+          {item.kind === "character" ? "角色" : item.kind === "prop" ? "道具" : "地形"}
+        </span>
+      </p>
+      {rows.map(({ label, field, values }) => (
+        <div key={field} className="grid grid-cols-[3.5rem_1fr_1fr_1fr] items-center gap-1 text-xs">
+          <span className="text-muted-foreground">{label}</span>
+          {(["X", "Y", "Z"] as const).map((ax, i) => (
+            <TransformField
+              key={`${item.id}-${label}-${ax}`}
+              value={values[i]}
+              step={0.1}
+              ariaLabel={`${item.name} ${label} ${ax}`}
+              onCommit={(v) => {
+                const next = [...values] as [number, number, number]
+                next[i] = v
+                onChange({ [field]: next })
+              }}
+            />
+          ))}
+        </div>
+      ))}
+      <div className="flex items-center justify-between border-t border-border/40 pt-1.5 text-xs text-muted-foreground">
+        <span>角色标签</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={showLabels}
+          onClick={() => onShowLabelsChange(!showLabels)}
+          className={cn("h-4 w-7 rounded-full transition-colors", showLabels ? "bg-primary" : "bg-border")}
+        >
+          <span
+            className={cn(
+              "block size-3.5 translate-x-0.5 rounded-full bg-background transition-transform",
+              showLabels && "translate-x-3",
+            )}
+          />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /** 单镜头编辑：拖拽/选中微调/坐标输入 + 机位参数 + 重新渲染；inline 堆叠 / fullscreen 三栏 */
 function BlockingShotEditor({
-  projectId, stage, shotIndex, shot, shotsCount, onShotIndexChange, onDone, variant = "inline",
+  projectId, stage, shotIndex, shot, shots, shotsCount, onShotIndexChange, onDone, variant = "inline",
 }: {
   projectId: string
   stage: WorkflowStage
   shotIndex: number
   shot: PrevisShot
+  shots: PrevisShot[]
   shotsCount: number
   onShotIndexChange: (index: number) => void
   onDone: () => void
@@ -139,14 +323,21 @@ function BlockingShotEditor({
   const [mapTab, setMapTab] = React.useState<"preview" | "depth" | "edge">("preview")
   const [centerTab, setCenterTab] = React.useState<"view3d" | "preview" | "depth" | "edge">("view3d")
   const [captured, setCaptured] = React.useState<CaptureResult | null>(null)
-  const [viewFromCamera, setViewFromCamera] = React.useState(false)
+  // Task 4 视口契约：视图模式（导演环绕 / 机位视角）、变换模式、名字标签
+  const [viewMode, setViewMode] = React.useState<ViewMode>("director")
+  const [transformMode, setTransformMode] = React.useState<TransformMode>("translate")
+  const [showLabels, setShowLabels] = React.useState(true)
+  const [openMenu, setOpenMenu] = React.useState<"add" | "aspect" | null>(null)
   const [aspect, setAspect] = React.useState<MapAspect>("16:9")
   const [orbits, setOrbits] = React.useState<OrbitPreview[]>([])
   const [clipboard, setClipboard] = React.useState<BlockingItem | null>(null)
+  /** 画幅 letterbox 适配尺寸：舞台容器内按所选比例的最大内接区（3D 画布框） */
+  const [fit, setFit] = React.useState<{ w: number; h: number } | null>(null)
   const itemsRef = React.useRef(items)
   itemsRef.current = items
   const viewportRef = React.useRef<PrevisViewportHandle | null>(null)
   const svgBoxRef = React.useRef<HTMLDivElement | null>(null)
+  const stageBoxRef = React.useRef<HTMLDivElement | null>(null)
 
   // 撤销/重做从 reducer 回灌：props 快照键变化（外部恢复）→ 重置本地编辑态
   const propsKey = JSON.stringify([shot.blocking, shot.camera])
@@ -156,12 +347,43 @@ function BlockingShotEditor({
       lastKey.current = propsKey
       setItems(shot.blocking)
       setCamera(shot.camera)
-      setSelected(null)
+      // 仅当外部恢复真的改动了内容（undo/redo/他处改写）或选中项被移除时才清选择——
+      // 本编辑器自身提交后的同内容回灌保留选择（gizmo 终帧、姿态滑杆、字段提交后不摘除）
+      const ownRoundTrip = JSON.stringify(shot.blocking) === JSON.stringify(itemsRef.current)
+      if (!ownRoundTrip || (selected != null && !shot.blocking.some((b) => b.id === selected))) {
+        setSelected(null)
+      }
       // 撤销/重做恢复的是纯数据：已导出的位图与瞬态环绕条与当前状态不一致，清空待重新渲染
       setCaptured(null)
       setOrbits([])
     }
-  }, [propsKey, shot])
+  }, [propsKey, shot, selected])
+
+  // 画幅 letterbox：舞台容器实测 → 按所选比例的最大内接区（fullscreen 3D 画布）
+  React.useEffect(() => {
+    if (variant !== "fullscreen") return
+    const el = stageBoxRef.current
+    if (!el) return
+    const update = () => {
+      const cw = el.clientWidth
+      const ch = el.clientHeight
+      if (cw === 0 || ch === 0) return
+      const ratio = ASPECT_RATIO[aspect]
+      const w = Math.min(cw, Math.floor(ch * ratio))
+      const h = Math.floor(w / ratio)
+      setFit((prev) => (prev && prev.w === w && prev.h === h ? prev : { w, h }))
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [aspect, variant])
+
+  // 视口相机比例锁定（与画布 letterbox 一致 → 几何不畸变；导出画幅同源）
+  React.useEffect(() => {
+    if (variant !== "fullscreen" || centerTab !== "view3d") return
+    viewportRef.current?.setViewAspect(ASPECT_RATIO[aspect])
+  }, [aspect, centerTab, variant])
 
   /** 本地编辑态提交到 reducer（一次逻辑编辑仅产生一个撤销快照：
    *   BLOCKING 先推快照（编辑前状态），CAMERA 复用同一快照不重复推；
@@ -219,7 +441,7 @@ function BlockingShotEditor({
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!dragId || !e.currentTarget.hasPointerCapture(e.pointerId)) return
     const { x, z } = worldFromEvent(e)
-    setItems((prev) => prev.map((b) => (b.id === dragId ? { ...b, position: [x, 0, z] } : b)))
+    setItems((prev) => prev.map((b) => (b.id === dragId ? { ...b, position: [x, b.position[1], z] } : b)))
   }
 
   const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -237,8 +459,8 @@ function BlockingShotEditor({
             ...b,
             position:
               axis === 0
-                ? ([round2(clamp(value, range)), 0, b.position[2]] as [number, number, number])
-                : ([b.position[0], 0, round2(clamp(value, range))] as [number, number, number]),
+                ? ([round2(clamp(value, range)), b.position[1], b.position[2]] as [number, number, number])
+                : ([b.position[0], b.position[1], round2(clamp(value, range))] as [number, number, number]),
           }
         : b,
     )
@@ -293,7 +515,7 @@ function BlockingShotEditor({
               ...b,
               position: [
                 round2(clamp(b.position[0] + d[0], X_RANGE)),
-                0,
+                b.position[1],
                 round2(clamp(b.position[2] + d[1], Z_RANGE)),
               ],
             }
@@ -316,7 +538,7 @@ function BlockingShotEditor({
     if (variant === "inline") onDone()
   }
 
-  /** 从当前环绕视角读取机位并应用 */
+  /** 从当前环绕视角读取机位并应用（pill「设当前视角为机位」） */
   const applyViewCamera = () => {
     const cam = viewportRef.current?.getViewCamera()
     if (!cam) return
@@ -324,10 +546,160 @@ function BlockingShotEditor({
     commit(items, cam)
   }
 
-  /** 环绕拍摄：瞬态预览条，点击缩略图应用机位 */
-  const shootOrbit = () => {
-    setOrbits(viewportRef.current?.captureOrbitPreviews(8) ?? [])
+  /**
+   * 视口 onTransform 统一回写：commit=false 帧只驱动 three 侧视觉（不写回——
+   * 无中间态 → 撤销单步、输入框/标签不随拖动抖动、reducer 不逐帧重渲染 SVG）；
+   * commit=true 终帧按既有画布范围钳制 x/z（y 保留真实高度）后一次落库。
+   */
+  const handleTransform = (
+    id: string,
+    patch: {
+      position?: [number, number, number]
+      rotation?: [number, number, number]
+      scale?: [number, number, number]
+    },
+    commitFlag: boolean,
+  ) => {
+    if (commitFlag !== true) return
+    const next = itemsRef.current.map((b) => {
+      if (b.id !== id) return b
+      const position = patch.position
+        ? ([
+            round2(clamp(patch.position[0], X_RANGE)),
+            patch.position[1],
+            round2(clamp(patch.position[2], Z_RANGE)),
+          ] as [number, number, number])
+        : b.position
+      return { ...b, position, rotation: patch.rotation ?? b.rotation, scale: patch.scale ?? b.scale }
+    })
+    if (JSON.stringify(next) === JSON.stringify(itemsRef.current)) return // 无实质变更：不占撤销栈
+    setItems(next)
+    dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: next, commit: true })
   }
+
+  /** 变换字段（右栏）提交 → 同一 commit 通路 */
+  const changeTransform = (
+    id: string,
+    patch: {
+      position?: [number, number, number]
+      rotation?: [number, number, number]
+      scale?: [number, number, number]
+    },
+  ) => handleTransform(id, patch, true)
+
+  /** 添加角色：色盘轮转 + 网格落位（与默认布景同区、避免互相重叠） + 自动选中 */
+  const addCharacter = (bodyType: string) => {
+    const chars = items.filter((b) => b.kind === "character")
+    const id = randomItemId("ch")
+    const col = (chars.length % 4) - 1.5 // -1.5 -0.5 0.5 1.5
+    const row = Math.floor(chars.length / 4)
+    const item: BlockingItem = {
+      id,
+      kind: "character",
+      name: `角色${String(chars.length + 1).padStart(2, "0")}`,
+      position: [round2(clamp(col * 1.25, X_RANGE)), 0, round2(clamp(1 + row * 0.8, Z_RANGE))],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      color: nextPaletteColor(items),
+      bodyType,
+      poseId: "stand",
+    }
+    const next = [...items, item]
+    setItems(next)
+    setSelected(id)
+    setOpenMenu(null)
+    dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: next, commit: true })
+  }
+
+  /** pill「当前视角截图」：按画幅真实导出三图并写回（不触发重新评估） */
+  const captureCurrent = () => {
+    const maps = viewportRef.current?.captureMaps(aspect)
+    if (!maps?.depthUrl) return
+    dispatch({ type: "UPDATE_PREVIS_MAPS", projectId, stageId: stage.id, shotIndex, maps })
+    setCaptured(maps)
+    toast.add({ title: "已按当前视角导出 布景 / 深度 / 边缘 三图", type: "success" })
+  }
+
+  /** pill「环绕拍摄」：展开瞬态预览条（已有则收起），点击缩略图应用机位 */
+  const toggleOrbit = () => {
+    if (orbits.length > 0) setOrbits([])
+    else setOrbits(viewportRef.current?.captureOrbitPreviews(8) ?? [])
+  }
+
+  /** 复制/粘贴/撤销/重做/删除的共享实现（工具条按钮与快捷键同一通路） */
+  const copySelected = () => {
+    // 地形不可复制：地面为布景单例，粘贴副本无法删除（removeSelected 同样守卫）
+    if (selectedItem && selectedItem.kind !== "terrain") setClipboard(selectedItem)
+  }
+  const pasteClipboard = () => {
+    const source = clipboard
+    if (!source) return
+    const copy: BlockingItem = {
+      ...source,
+      id: randomItemId("c"),
+      name: `${source.name} 副本`,
+      // v2：粘贴保留源 y（几何中心/脚底语义）；x/z 沿用旧的错位 +1 惯例
+      position: [
+        round2(clamp(source.position[0] + 1, X_RANGE)),
+        source.position[1],
+        round2(clamp(source.position[2] + 1, Z_RANGE)),
+      ],
+      rotation: [...source.rotation] as [number, number, number],
+      scale: [...source.scale] as [number, number, number],
+    }
+    const next = [...items, copy]
+    setItems(next)
+    setSelected(copy.id)
+    setOpenMenu(null)
+    commit(next, camera)
+  }
+  const removeSelected = () => {
+    const sel = selected
+    const item = items.find((b) => b.id === sel)
+    if (!item || item.kind === "terrain") return // 地形不可删（布景地面语义）
+    const next = items.filter((b) => b.id !== sel)
+    setSelected(null)
+    setItems(next)
+    dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: next, commit: true })
+  }
+  const undo = () => dispatch({ type: "PREVIS_UNDO", projectId, stageId: stage.id })
+  const redo = () => dispatch({ type: "PREVIS_REDO", projectId, stageId: stage.id })
+
+  // 全屏快捷键：⌘/Ctrl+Z 撤销（+Shift 重做）、C/V 复制/粘贴、Delete/Backspace 删除。
+  // 依赖变化（提交/选中/剪贴板）时重建监听——频率低，换取闭包始终新鲜。
+  React.useEffect(() => {
+    if (variant !== "fullscreen") return
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return
+      if (e.isComposing) return // 输入法组合中不劫持
+      const mod = e.metaKey || e.ctrlKey
+      const k = e.key.toLowerCase()
+      if (mod && k === "z") {
+        e.preventDefault()
+        if (e.shiftKey) redo()
+        else undo()
+        return
+      }
+      if (mod && k === "c") {
+        e.preventDefault()
+        copySelected()
+        return
+      }
+      if (mod && k === "v") {
+        e.preventDefault()
+        pasteClipboard()
+        return
+      }
+      if (!mod && (e.key === "Delete" || e.key === "Backspace")) {
+        e.preventDefault()
+        removeSelected()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 处理函数每次渲染重建；仅需在其依赖的状态变化时重挂监听
+  }, [variant, selected, items, clipboard, camera])
 
   // —— 布局区块：inline 堆叠、fullscreen 三栏，共用同一交互逻辑 ——
   const canvasEl = (
@@ -350,7 +722,7 @@ function BlockingShotEditor({
     />
   )
 
-  // 中央工具栏：视图/三图切换 + 画幅比例 + 环绕拍摄 + 从机位看
+  // 中央工具栏：视图/三图切换 + 导演/机位视角分段开关（画幅/环绕/截图等已移入画布 pill 工具条）
   const centerTabsEl = (
     <div className="flex flex-wrap items-center gap-1.5">
       {(
@@ -375,34 +747,43 @@ function BlockingShotEditor({
           {label}
         </button>
       ))}
-      <span className="mx-1 h-4 w-px bg-border" />
-      {(["16:9", "9:16", "1:1"] as MapAspect[]).map((a) => (
-        <button
-          key={a}
-          type="button"
-          onClick={() => setAspect(a)}
-          className={cn(
-            "rounded-md border px-1.5 py-1 text-[11px] tabular-nums transition-colors",
-            aspect === a
-              ? "border-primary/60 bg-primary/10 font-medium"
-              : "border-border/60 text-muted-foreground hover:border-primary/30",
-          )}
-        >
-          {a}
-        </button>
-      ))}
-      <span className="mx-1 h-4 w-px bg-border" />
-      <Button size="sm" variant="ghost" className="gap-1 text-xs" onClick={shootOrbit}>
-        <CameraIcon className="size-3.5" /> 环绕拍摄
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        className={cn("ml-auto gap-1 text-xs", viewFromCamera && "border border-primary/40 bg-primary/5 text-primary")}
-        onClick={() => setViewFromCamera((v) => !v)}
-      >
-        <EyeIcon className="size-3.5" /> 从机位看
-      </Button>
+      {variant === "fullscreen" && (
+        <>
+          <span className="mx-1 h-4 w-px bg-border" />
+          <div className="ml-auto flex items-center rounded-md border border-border bg-muted/40 p-0.5 text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                setOpenMenu(null)
+                setViewMode("director")
+              }}
+              className={cn(
+                "rounded px-2 py-0.5 transition-colors",
+                viewMode === "director"
+                  ? "bg-background font-medium shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              导演视角
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpenMenu(null)
+                setViewMode("camera")
+              }}
+              className={cn(
+                "rounded px-2 py-0.5 transition-colors",
+                viewMode === "camera"
+                  ? "bg-background font-medium shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              机位视角
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 
@@ -451,6 +832,17 @@ function BlockingShotEditor({
   )
 
   const selectedItem = items.find((b) => b.id === selected)
+
+  /** 变换分组：位置/旋转/缩放精确输入 + 角色标签开关（仅 fullscreen，选中任意布景项） */
+  const transformEl =
+    variant === "fullscreen" && selectedItem ? (
+      <TransformGroup
+        item={selectedItem}
+        showLabels={showLabels}
+        onShowLabelsChange={setShowLabels}
+        onChange={(patch) => changeTransform(selectedItem.id, patch)}
+      />
+    ) : null
 
   /** 姿态面板：体型 + 姿势预设 + 关节滑杆（仅选中角色，fullscreen） */
   const poseEl =
@@ -559,7 +951,7 @@ function BlockingShotEditor({
         variant="outline"
         className="gap-1 text-xs"
         disabled={state.previsUndo.past.length === 0}
-        onClick={() => dispatch({ type: "PREVIS_UNDO", projectId, stageId: stage.id })}
+        onClick={undo}
       >
         <Undo2Icon className="size-3.5" /> 撤销
       </Button>
@@ -568,7 +960,7 @@ function BlockingShotEditor({
         variant="outline"
         className="gap-1 text-xs"
         disabled={state.previsUndo.future.length === 0}
-        onClick={() => dispatch({ type: "PREVIS_REDO", projectId, stageId: stage.id })}
+        onClick={redo}
       >
         <Redo2Icon className="size-3.5" /> 重做
       </Button>
@@ -583,7 +975,7 @@ function BlockingShotEditor({
           variant="outline"
           className="gap-1 text-xs"
           disabled={!selectedItem}
-          onClick={() => setClipboard(selectedItem ?? null)}
+          onClick={copySelected}
         >
           <CopyIcon className="size-3.5" /> 复制
         </Button>
@@ -592,23 +984,7 @@ function BlockingShotEditor({
           variant="outline"
           className="gap-1 text-xs"
           disabled={!clipboard}
-          onClick={() => {
-            if (!clipboard) return
-            const copy: BlockingItem = {
-              ...clipboard,
-              id: `c-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-              name: `${clipboard.name} 副本`,
-              position: [
-                round2(clamp(clipboard.position[0] + 1, X_RANGE)),
-                0,
-                round2(clamp(clipboard.position[2] + 1, Z_RANGE)),
-              ] as [number, number, number],
-            }
-            const next = [...items, copy]
-            setItems(next)
-            setSelected(copy.id)
-            commit(next, camera)
-          }}
+          onClick={pasteClipboard}
         >
           <ClipboardIcon className="size-3.5" /> 粘贴
         </Button>
@@ -652,35 +1028,136 @@ function BlockingShotEditor({
           </div>
           <div className="flex min-h-0 flex-col gap-3">
             {centerTabsEl}
-            <div className="relative min-h-0 flex-1 overflow-hidden rounded-md border bg-background">
+            <div
+              ref={stageBoxRef}
+              className="relative min-h-0 flex-1 overflow-hidden rounded-md border bg-background"
+            >
               {centerTab === "view3d" ? (
-                <>
+                <div
+                  className="absolute inset-0 m-auto"
+                  style={{ width: fit?.w ?? "100%", height: fit?.h ?? "100%" }}
+                >
                   <PrevisViewport
                     ref={viewportRef}
                     items={items}
                     camera={camera}
+                    shots={shots}
+                    shotIndex={shotIndex}
+                    viewMode={viewMode}
+                    transformMode={transformMode}
+                    showLabels={showLabels}
                     selectedId={selected}
-                    viewFromCamera={viewFromCamera}
                     onSelect={setSelected}
-                    onMoveItem={(id, x, z) =>
-                      setItems((prev) =>
-                        prev.map((b) =>
-                          b.id === id
-                            ? {
-                                ...b,
-                                position: [
-                                  round2(clamp(x, X_RANGE)),
-                                  0,
-                                  round2(clamp(z, Z_RANGE)),
-                                ] as [number, number, number],
-                              }
-                            : b,
-                        ),
-                      )
-                    }
+                    onSelectShot={onShotIndexChange}
+                    onTransform={handleTransform}
                   />
+                  {/* 弹层打开时：点画布空白处关闭（高于 FrameOverlay、低于 pill） */}
+                  {viewMode === "director" && openMenu != null && (
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      aria-label="关闭菜单"
+                      onPointerDown={() => setOpenMenu(null)}
+                      className="absolute inset-0 z-10 cursor-default bg-transparent"
+                    />
+                  )}
+                  {viewMode === "director" && (
+                    <>
+                      {/* pill 工具条：画布底部玻璃胶囊（导演视角下） */}
+                      <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center">
+                        <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-border/60 bg-background/80 px-1.5 py-1 shadow-lg backdrop-blur-md">
+                          <ModeButton
+                            active={transformMode === "translate"}
+                            icon={<Move3dIcon className="size-4" />}
+                            label="移动"
+                            onClick={() => setTransformMode("translate")}
+                          />
+                          <ModeButton
+                            active={transformMode === "rotate"}
+                            icon={<Rotate3dIcon className="size-4" />}
+                            label="旋转"
+                            onClick={() => setTransformMode("rotate")}
+                          />
+                          <ModeButton
+                            active={transformMode === "scale"}
+                            icon={<Scale3dIcon className="size-4" />}
+                            label="缩放"
+                            onClick={() => setTransformMode("scale")}
+                          />
+                          <span className="mx-0.5 h-4 w-px bg-border" />
+                          <ModeButton
+                            icon={<UserPlusIcon className="size-4" />}
+                            label="添加角色"
+                            onClick={() => setOpenMenu(openMenu === "add" ? null : "add")}
+                          />
+                          <ModeButton
+                            icon={<CameraIcon className="size-4" />}
+                            label="设当前视角为机位"
+                            onClick={applyViewCamera}
+                          />
+                          <ModeButton
+                            icon={<FrameIcon className="size-4" />}
+                            label={`画幅 ${aspect}`}
+                            onClick={() => setOpenMenu(openMenu === "aspect" ? null : "aspect")}
+                          />
+                          <ModeButton
+                            icon={<ImageIcon className="size-4" />}
+                            label="当前视角截图"
+                            onClick={captureCurrent}
+                          />
+                          <ModeButton
+                            icon={<OrbitIcon className="size-4" />}
+                            label="环绕拍摄"
+                            onClick={toggleOrbit}
+                          />
+                        </div>
+                      </div>
+                      {/* 添加角色体型选择 */}
+                      {openMenu === "add" && (
+                        <div className="absolute bottom-14 left-1/2 z-20 w-44 -translate-x-1/2 rounded-xl border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur-md">
+                          <p className="px-2 py-1 text-[10px] font-medium text-muted-foreground">选择体型</p>
+                          {BODY_TYPES.map((b) => (
+                            <button
+                              key={b.id}
+                              type="button"
+                              onClick={() => addCharacter(b.id)}
+                              className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs transition-colors hover:bg-foreground/10"
+                            >
+                              <span>{b.name}</span>
+                              <span className="text-[10px] text-muted-foreground">{b.id}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {/* 画幅切换 */}
+                      {openMenu === "aspect" && (
+                        <div className="absolute bottom-14 left-1/2 z-20 -translate-x-1/2 rounded-lg border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur-md">
+                          <div className="flex gap-1">
+                            {(["16:9", "9:16", "1:1"] as MapAspect[]).map((a) => (
+                              <button
+                                key={a}
+                                type="button"
+                                onClick={() => {
+                                  setAspect(a)
+                                  setOpenMenu(null)
+                                }}
+                                className={cn(
+                                  "rounded-md border px-2 py-1 text-[11px] tabular-nums transition-colors",
+                                  aspect === a
+                                    ? "border-primary/60 bg-primary/10 font-medium"
+                                    : "border-border/60 text-muted-foreground hover:border-primary/30",
+                                )}
+                              >
+                                {a}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
                   <FrameOverlay aspect={aspect} />
-                </>
+                </div>
               ) : (
                 <div className="flex h-full items-center justify-center bg-muted/20 p-2">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -720,6 +1197,7 @@ function BlockingShotEditor({
             )}
           </div>
           <div className="flex min-h-0 flex-col gap-4 overflow-y-auto pl-1">
+            {transformEl}
             {poseEl}
             {cameraEl}
             {actionsEl}
@@ -773,6 +1251,7 @@ export function PrevisBlockingEditor({
       stage={stage}
       shotIndex={index}
       shot={shot}
+      shots={shots}
       shotsCount={shots.length}
       onShotIndexChange={onShotIndexChange}
       onDone={onDone}

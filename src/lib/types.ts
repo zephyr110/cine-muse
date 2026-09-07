@@ -53,9 +53,14 @@ export interface BlockingItem {
   id: string
   kind: "character" | "prop" | "terrain"
   name: string
+  /** 世界位置：character 的 y=脚底平面高度；prop/terrain 的 y=几何中心高度（v2 起真实有效） */
   position: [number, number, number]
-  rotationY: number
-  scale: number
+  /** 欧拉旋转（度，绕任意轴），v2 取代 rotationY */
+  rotation: [number, number, number]
+  /** 非等比缩放，v2 取代标量 scale */
+  scale: [number, number, number]
+  /** 角色染色（#rrggbb）；缺省按 kind 派生 */
+  color?: string
   /** 角色姿势：体型 + 姿势预设 + 关节角度（度，materialized 全量有效值） */
   bodyType?: string
   poseId?: string
@@ -282,6 +287,7 @@ export interface ModelConfig {
 }
 
 export interface AppState {
+  version: number // 数据形态版本（见 engine/reducer.ts DATA_VERSION）
   assets: Asset[]
   projects: Project[]
   events: EngineEvent[] // 倒序（新在前）
