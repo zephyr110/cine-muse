@@ -363,10 +363,6 @@ export interface PrevisViewportProps {
   onSelectShot?: (index: number) => void
   /** 变换结果增量回写：commit=false 为拖拽帧、true 为终帧（editor 据此建撤销快照） */
   onTransform?: (id: string, patch: ItemPatch, commit: boolean) => void
-  /** @deprecated 旧语义 props——仅供 Task 5 之前的 editor 编译通过，内部不再使用；Task 5 移除 */
-  viewFromCamera?: boolean
-  /** @deprecated 同上；位置拖动改走 onTransform */
-  onMoveItem?: (id: string, x: number, z: number) => void
 }
 
 export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewportProps>(
