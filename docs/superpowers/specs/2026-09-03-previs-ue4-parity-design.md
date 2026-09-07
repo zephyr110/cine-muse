@@ -21,7 +21,8 @@ v0.1（本版）：三轮产品问答定稿——UE4 素体 GLB 引入（Q1=B，
 
 ### 2.1 资产
 
-- 复制 `storyai-ref/public/models/ue-mannequin-retopology.glb` → 本仓库 `public/models/ue-mannequin-retopology.glb`（随 Next 静态导出与 Electron 打包分发；许可风险用户已确认）
+- 复制 `storyai-ref/public/models/ue-mannequin-retopology.glb` → 本仓库 `public/models/ue-mannequin-retopology.glb`（随 Next 静态导出与 Electron 打包分发）
+- **许可（已核实）**：资产为 Sketchfab 发布（"UE Mannequin (Retopology)"，作者 William Luque，sketchfab.com/luquewilliam230），**SKETCHFAB Standard**——商业/衍生可用，要求署名与基础限制（独立再分发原始文件受限）；参考仓库附带 `ue-mannequin-retopology.license.txt`。处置：随资产一并复制 license.txt 至 `public/models/`，并在应用内「关于/设置」不可见前提下以文档署名（spec §2.1 已载明来源/作者/许可链接）——分发形态风险由用户此前拍板接受
 - 加载：GLTFLoader（three addons）；每实例 `SkeletonUtils.clone(gltf.scene)`；实例材质克隆 + 染色（默认色 #4F8EF7；胸 logo 材质豁免——实现按参考 UE4MannequinModel.tsx:41-53 的材料判定）
 
 ### 2.2 骨骼驱动三件套（数值 1:1 移植）
