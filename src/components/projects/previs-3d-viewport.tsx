@@ -6,7 +6,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 import { TransformControls } from "three/addons/controls/TransformControls.js"
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js"
 
-import { BODY_TYPE_BY_ID, POSE_PRESET_BY_ID, type JointName } from "@/lib/engine/previs-poses"
+import { BODY_TYPE_BY_ID } from "@/lib/engine/previs-poses"
 import type { BlockingItem, PrevisShot } from "@/lib/types"
 
 /** 导出图基准分辨率（按画幅比例派生宽高） */
@@ -81,31 +81,34 @@ function ancestorShotIndex(obj: THREE.Object3D | null): number | null {
   return null
 }
 
-/** 程序化精细人偶：骨盆球 + 躯干双胶囊（腹/胸）+ 深色接缝环 + 头（眼鼻嘴）+ 四肢深色末端。
+/**
+ * 程序化精细人偶：骨盆球 + 躯干双胶囊（腹/胸）+ 深色接缝环 + 头（眼鼻嘴）+ 四肢深色末端。
  *  组原点 = 脚底平面（y=0），高度沿 +y，默认面向 +Z；位置/旋转/缩放由 buildMesh 在父级应用。
- *  层级：根组 = 骨盆 + 双腿；torsoGroup（原点在髋高、随 torso 关节旋转）内 = 双胶囊躯干 +
- *  深色接缝环 + 头（眼鼻嘴）+ 双臂——躯干/头/臂随 torso 整体摆动，骨盆与双腿保持原位。 */
+ *  层级：根组 = 骨盆 + 双腿；torsoGroup（原点在髋高）内 = 双胶囊躯干 + 深色接缝环 +
+ *  头（眼鼻嘴）+ 双臂。
+ *
+ *  ⚠️ Task 2 过渡占位（v3 controls 换装后）：原 6 关节三元组消费已删除，v3 姿势数据是
+ *  单值词表（度），其语义绑定 UE4 骨骼驱动（previs-ue4-rig）；程序化人偶按新词表重驱动
+ *  （肢体分肩/肘/髋/膝 + offsetY）与 UE4 素体双路径属 Task 4——本占位先渲染「中性站姿」
+ *  静态图元（保证编译与渲染，外形几何沿用旧精细人偶）。体型仅消费 BODY_TYPES 展示身高
+ *  （骨缩放以 previs-ue4-rig 表为准）；buildMesh 的 rigKey 重建签名已含 controls，Task 4
+ *  接上驱动后姿势变更自动触发重建。
+ */
 function buildMannequin(item: BlockingItem): THREE.Group {
   const g = new THREE.Group()
-  const body = BODY_TYPE_BY_ID[item.bodyType ?? "standard"]
-  const controls = item.controls ?? POSE_PRESET_BY_ID[item.poseId ?? "stand"]?.controls ?? {}
+  const body = BODY_TYPE_BY_ID[item.bodyType ?? "mannequin"]
   const h = body?.height ?? 1.8
-  const w = body?.width ?? 1
-  const headR = (body?.headSize ?? 0.34) * 0.5
   const mat = new THREE.MeshStandardMaterial({ color: resolveItemColor(item), metalness: 0.04, roughness: 0.74 })
   const dark = new THREE.MeshStandardMaterial({ color: DETAIL_COLOR, metalness: 0.1, roughness: 0.85 })
 
-  /** 四肢：holder 定位于关节枢轴（已在所属父组坐标中）并按 controls 旋转；
-   *  胶囊由枢轴下垂 len（下端 = 枢轴 − len）；末端深色手/脚球——
-   *  手球心略高于末端（拳沿臂端下方露 ~0.75rad），脚球心抬至球底恰触地（不穿地板）。 */
+  /** 四肢（中性站姿）：holder 定位于关节枢轴；胶囊由枢轴下垂 len（下端 = 枢轴 − len）；
+   *  末端深色手/脚球——手球心略高于末端（拳沿臂端下方露 ~0.75rad），脚球心抬至球底恰触地。 */
   const limb = (
     len: number, rad: number, pivot: [number, number, number],
-    joint: JointName, foot = false,
+    foot = false,
   ): THREE.Group => {
     const holder = new THREE.Group()
     holder.position.set(...pivot)
-    const [rx, ry, rz] = controls[joint] ?? [0, 0, 0]
-    holder.rotation.set(rx * DEG, ry * DEG, rz * DEG)
     const seg = new THREE.Mesh(new THREE.CapsuleGeometry(rad, Math.max(0.05, len - rad * 2), 4, 12), mat)
     seg.position.y = -len / 2
     holder.add(seg)
@@ -119,23 +122,22 @@ function buildMannequin(item: BlockingItem): THREE.Group {
   const hipY = h * 0.52
   const shoulderY = h * 0.8
   const dT = shoulderY - hipY // 髋→肩 躯干高度段
-  const chestR = 0.3 * w
-  const hipR = 0.32 * w
+  const chestR = 0.3 * 1 // 横向比例沿用旧 w=1 常量（v3 体型无 width/headSize 字段）
+  const hipR = 0.32
   const armLen = h * 0.33
-  const armRad = 0.09 * w
-  const legRad = 0.13 * w
-  const shoulderX = 0.33 * w
+  const armRad = 0.09
+  const legRad = 0.13
+  const shoulderX = 0.33
+  const headR = h * 0.1
 
   // —— 骨盆（根组）：髋位球 ——
   const pelvis = new THREE.Mesh(new THREE.SphereGeometry(hipR, 16, 12), mat)
   pelvis.position.y = hipY - 0.02 * h
   g.add(pelvis)
 
-  // —— 躯干关节组（原点 = 髋高）——
+  // —— 躯干关节组（原点 = 髋高；中性站姿无旋转）——
   const torsoGroup = new THREE.Group()
   torsoGroup.position.y = hipY
-  const [tx, ty, tz] = controls.torso ?? [0, 0, 0]
-  torsoGroup.rotation.set(tx * DEG, ty * DEG, tz * DEG)
   g.add(torsoGroup)
 
   // 下腹胶囊（腰→下胸）与上胸胶囊（胸→肩；顶点收在头底之下，避免吞没头部）
@@ -148,7 +150,7 @@ function buildMannequin(item: BlockingItem): THREE.Group {
 
   // 深色接缝环：管 0.018w 微嵌体表、外露成细环——腰环贴腹段、颈环贴胸段上缘
   const seam = (y: number, r: number) => {
-    const t = new THREE.Mesh(new THREE.TorusGeometry(r, 0.018 * w, 6, 20), dark)
+    const t = new THREE.Mesh(new THREE.TorusGeometry(r, 0.018, 6, 20), dark)
     t.rotation.x = Math.PI / 2
     t.position.y = y
     torsoGroup.add(t)
@@ -159,8 +161,6 @@ function buildMannequin(item: BlockingItem): THREE.Group {
   // —— 头（随躯干组）：球 + 深色五官（眼/鼻/嘴，+Z 面向）——
   const headGroup = new THREE.Group()
   headGroup.position.set(0, dT + headR * 1.15, 0) // 世界 y = shoulderY + 1.15·headR（头顶 ≈ h）
-  const [hx, hy, hz] = controls.head ?? [0, 0, 0]
-  headGroup.rotation.set(hx * DEG, hy * DEG, hz * DEG)
   const skull = new THREE.Mesh(new THREE.SphereGeometry(headR, 18, 14), mat)
   headGroup.add(skull)
   const fz = headR * 0.86 // 眼 z（球心嵌入颅面，微凸）
@@ -178,12 +178,12 @@ function buildMannequin(item: BlockingItem): THREE.Group {
   torsoGroup.add(headGroup)
 
   // —— 手臂（肩高挂点，随躯干组）——
-  torsoGroup.add(limb(armLen, armRad, [-shoulderX, dT, 0], "armL"))
-  torsoGroup.add(limb(armLen, armRad, [shoulderX, dT, 0], "armR"))
+  torsoGroup.add(limb(armLen, armRad, [-shoulderX, dT, 0]))
+  torsoGroup.add(limb(armLen, armRad, [shoulderX, dT, 0]))
 
   // —— 腿（髋高挂点，直挂根组——不随躯干转）——
-  g.add(limb(hipY, legRad, [-0.17 * w, hipY, 0], "legL", true))
-  g.add(limb(hipY, legRad, [0.17 * w, hipY, 0], "legR", true))
+  g.add(limb(hipY, legRad, [-0.17, hipY, 0], true))
+  g.add(limb(hipY, legRad, [0.17, hipY, 0], true))
 
   return g
 }

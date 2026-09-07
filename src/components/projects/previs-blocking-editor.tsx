@@ -21,14 +21,7 @@ import { toast } from "@/components/ui/toast"
 import { useApp } from "@/lib/store"
 import { injectMarkerIds, renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { isPrevisArtifact } from "@/lib/engine/previs-types"
-import {
-  BODY_TYPES,
-  JOINT_LABELS,
-  JOINT_LIMITS,
-  POSE_PRESETS,
-  POSE_PRESET_BY_ID,
-  type JointName,
-} from "@/lib/engine/previs-poses"
+import { BODY_TYPES, POSE_GROUPS, POSE_PRESETS, POSE_PRESET_BY_ID } from "@/lib/engine/previs-poses"
 import type { BlockingItem, PrevisShot, WorkflowStage } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -844,7 +837,10 @@ function BlockingShotEditor({
       />
     ) : null
 
-  /** 姿态面板：体型 + 姿势预设 + 关节滑杆（仅选中角色，fullscreen） */
+  /** 姿态面板：体型 + 姿势预设 + 词表单值滑杆（仅选中角色，fullscreen）。
+   *  ⚠️ Task 2 过渡 UI：滑杆区为 POSE_GROUPS 11 组的通用平铺（按 def 的 min/max，单值写回
+   *  v3 controls；body.offsetY 按米显示、步进 0.01）。折叠分节 + 按体型限位收窄等面板精调
+   *  属 Task 6（plan U4-T6 Step 2），届时整体替换本滑杆区。 */
   const poseEl =
     variant === "fullscreen" && selectedItem?.kind === "character" ? (
       <div className="rounded-md border border-border/60 p-2">
@@ -853,7 +849,7 @@ function BlockingShotEditor({
         </p>
         <div className="flex gap-2">
           <select
-            value={selectedItem.bodyType ?? "standard"}
+            value={selectedItem.bodyType ?? "mannequin"}
             onChange={(e) => updateCharacter(selectedItem.id, { bodyType: e.target.value })}
             className="h-7 flex-1 rounded border bg-background px-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
@@ -879,29 +875,37 @@ function BlockingShotEditor({
           </select>
         </div>
         <div className="mt-2 flex flex-col gap-1.5">
-          {(Object.keys(JOINT_LABELS) as JointName[]).map((j) => {
-            const [min, max] = JOINT_LIMITS[j]
-            const v = selectedItem.controls?.[j]?.[0] ?? 0
-            return (
-              <label key={j} className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                <span className="w-8 shrink-0">{JOINT_LABELS[j]}</span>
-                <input
-                  type="range"
-                  min={min}
-                  max={max}
-                  step={5}
-                  value={v}
-                  onChange={(e) => {
-                    const next = { ...selectedItem.controls } as Record<string, [number, number, number]>
-                    next[j] = [Number(e.target.value), next[j]?.[1] ?? 0, next[j]?.[2] ?? 0]
-                    updateCharacter(selectedItem.id, { controls: next })
-                  }}
-                  className="flex-1 accent-primary"
-                />
-                <span className="w-8 text-right tabular-nums">{v}°</span>
-              </label>
-            )
-          })}
+          {POSE_GROUPS.map((group) => (
+            <div key={group.id}>
+              <p className="mb-0.5 text-[10px] font-medium text-muted-foreground/80">{group.label}</p>
+              {group.sliders.map((def) => {
+                const isOffsetY = def.key === "body.offsetY"
+                const v = selectedItem.controls?.[def.key] ?? 0
+                return (
+                  <label key={def.key} className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <span className="w-8 shrink-0">{def.label}</span>
+                    <input
+                      type="range"
+                      min={def.min}
+                      max={def.max}
+                      step={isOffsetY ? 0.01 : 1}
+                      value={v}
+                      onChange={(e) => {
+                        const next = { ...selectedItem.controls }
+                        next[def.key] = Number(e.target.value)
+                        updateCharacter(selectedItem.id, { controls: next })
+                      }}
+                      className="flex-1 accent-primary"
+                    />
+                    <span className="w-14 text-right tabular-nums">
+                      {v}
+                      {isOffsetY ? " 米" : "°"}
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+          ))}
         </div>
       </div>
     ) : null
