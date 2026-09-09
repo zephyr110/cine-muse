@@ -119,14 +119,26 @@ v0.1（本版）：三轮产品问答定稿——UE4 素体 GLB 引入（Q1=B，
 
 ## 6. 验收清单（对照参考 A/B）
 
-- [ ] 默认角色渲染为 UE4 素体（光滑无脸、染色 #4F8EF7、胸 logo 豁免），贴地不悬浮；GLB 加载失败回退程序化人偶
-- [ ] 8 体型（男性素体…二头身）骨缩放差异与参考一致（二头身头×4 等）
-- [ ] 20 姿势预设与参考逐帧一致（含 t-pose/单双膝跪/叉腰/看手机/offsetY 下蹲）
-- [ ] 右栏 11 组滑杆与参考一致，数值写回 controls 驱动 UE4 骨架
-- [ ] 旧项目数据迁移：体型/姿势映射生效、微调归并预设、undo 栈安全、缓存图重渲染后更新
-- [ ] 选中角色仅 gizmo（无红框）；rig 拖动 translate/rotate 随动且 target 视距跟随；机位01 命名
-- [ ] 自由摆放无 X/Z 钳制；删除/撤销/复制粘贴/机位视角等 parity 行为回归
-- [ ] SVG 三图与 3D 同源（姿势不影响足迹，重渲染比对）
+> 状态标记（2026-09-09）：`[x]` = 代码门禁/自动化测试已覆盖（附证据）；`[ ]` + `PENDING（人工 A/B）` = 需人工浏览器对照参考。汇总见本节末「验收状态（2026-09-09）」。
+
+- [ ] 默认角色渲染为 UE4 素体（光滑无脸、染色 #4F8EF7、胸 logo 豁免），贴地不悬浮；GLB 加载失败回退程序化人偶 —— **PENDING（人工 A/B）**（外观与默认渲染需浏览器）。代码层子项已验证：默认色 `#4F8EF7`（`previs-ue4-model.test.ts > resolveCharacterTint > 默认色锁定 spec §2.1/§6`）、胸 logo 豁免（`… > isolateAndTintUE4MannequinMaterials：染色与胸 logo 豁免`）、贴地（`previs-ue4-rig.test.ts > alignToGround` 4 例 + `previs-ue4-model.test.ts > 克隆…+ 贴地`）、失败回退（`previs-ue4-model.test.ts > UE4 实例化异常 → 程序化回退`、`> ensureUe4Model：加载失败语义`）
+- [x] 8 体型（男性素体…二头身）骨缩放差异与参考一致（二头身头×4 等）—— `previs-ue4-rig.test.ts > 体型缩放表`（8 款 × 19 骨、脊柱收窄/骨盆与头部分级放大、整模缩放 teen 0.88 / child 0.72 / chibi 0.56）、`资产集成：rig 表 ↔ 真实 GLB > GLB JSON 节点名…` 与 `… > GLTFLoader.parse 后 rig 完整驱动真实骨架`、真实骨架用例断言 `chibi 头骨缩放 ×4`；表值 1:1 移植经 Task 1 review 机检
+- [ ] 20 姿势预设与参考逐帧一致（含 t-pose/单双膝跪/叉腰/看手机/offsetY 下蹲）—— **PENDING（人工 A/B）**（逐帧观感）。数值层已锁定：`previs-poses.test.ts > 姿势预设 POSE_PRESETS（与 REF 逐字）`（恰 20 款且 id/名称/顺序一致 + T 型/蹲下 offsetY/单膝跪/双膝跪/叉腰校准直移）、`previs-ue4-rig.test.ts > 足部 pitch 控制用于跪姿/弓步`
+- [ ] 右栏 11 组滑杆与参考一致，数值写回 controls 驱动 UE4 骨架 —— **PENDING（人工 A/B）**（面板渲染无自动化测试）。定义与写回已验证：`previs-poses.test.ts > 滑杆组 POSE_GROUPS`（恰 11 组、id/标签齐全、键 ⊆ 词表）、`previs-ue4-rig.test.ts > applyUE4Rig`（controls → 骨骼四元数/offsetY）
+- [x] 旧项目数据迁移：体型/姿势映射生效、微调归并预设、undo 栈安全、缓存图重渲染后更新 —— `reducer.test.ts > migrateAppState v2 → v3（词表换装）` 8 例（体型全表映射含有损项、姿势直连/近义/有损并入/未知名落 stand、controls 重派生且深拷贝、微调归并、未知体型宽容、undo past/future 快照同规则迁移且缓存 SVG/PNG 不清空、v1→v3 链式、v3 幂等）
+- [ ] 选中角色仅 gizmo（无红框）；rig 拖动 translate/rotate 随动且 target 视距跟随；机位01 命名 —— **PENDING（人工 A/B）**（视口交互无自动化测试）。代码层：高亮渲染路径已删（`buildBoundsEdges` 仅剩边缘图导出，`previs-3d-viewport.tsx:1181`）、`hlGroup` 源码零命中、命名两位补零 `rigLabel`（`previs-blocking-editor.tsx:65`）、rig 视距跟随数学 `previs-camera.test.ts > reframeCamera` 5 例
+- [ ] 自由摆放无 X/Z 钳制；删除/撤销/复制粘贴/机位视角等 parity 行为回归 —— **PENDING（人工 A/B）**。3D 提交路径已无钳制（`previs-blocking-editor.tsx:607/697` 仅 `round2`）；撤销/重做有 `reducer.test.ts` 4 例覆盖；**已知残余**：2D 画布指针拖拽仍按 SVG 画布范围收边（`previs-blocking-editor.tsx:442-444` `worldFromEvent`，T6 minor），复制粘贴实现存在但无自动化测试（`previs-blocking-editor.tsx:684-754`）
+- [x] SVG 三图与 3D 同源（姿势不影响足迹，重渲染比对）—— `previs-render.test.ts > v2 投影语义`（足迹随 rotation[1] 旋转/非等比 scale 缩放、深度按 3D 距离近亮远暗）、`> 三图背景与标记契约`、`reducer.test.ts > RERENDER_PREVIS` 2 例；足迹仅由 position/rotation/scale 派生，renderer 不读 controls（姿势不影响足迹为结构性保证）
+
+### 验收状态（2026-09-09）
+
+- **分支头**：`feat/previs-ue4` @ `f9dd41642172bdfbb0912f8bfa34cfd28f6f5ba0`（Task 1–6 全部 complete）
+- **代码门禁**：`pnpm test` **113/113 passed**（8 文件；分支基线 35 → 113）；`pnpm build` **13/13** 静态页；`pnpm exec tsc --noEmit -p tsconfig.json` **0 errors**（exit 0）
+- **v2 残留扫描**：`rotationY` / `hlGroup` / `#6366f1` / 旧体型 id / 旧姿势 id / `[x,y,z]` 姿势三元组 全部零泄漏——命中项均为迁移字面量、REF 忠实移植或 pre-existing（逐条见 task-7 report）
+- **桌面资产 URL 已知问题（记录，未修）**：`UE4_MODEL_URL = "/models/ue-mannequin-retopology.glb"` 为根绝对路径（`previs-ue4-model.ts:39`）；`CINE_RELATIVE_ASSETS=1` 仅改写 webpack 产物前缀（`next.config.ts:8` → `assetPrefix: "./"`），运行期字面量不变——实测桌面构建 `out/index.html` 用 `./_next/...` 而 chunk 内仍为 `/models/...`，Electron `file://` 下解析为 `file:///models/...` 加载失败 → 静默回退程序化人偶。Dev/浏览器不受影响。待用户决策（webpack asset import vs Electron 协议/基路径）
+- **A/B 环境**：参考应用 `/Users/zephyr/.claude/jobs/19e19313/tmp/storyai-ref` 安装成功（`npm install`，229 包）、`npm run dev` 于 **http://localhost:5173/**（标题「3D导演台 Demo」）返回 HTTP 200；核验后已停止。对照点：默认角色渲染与染色、体型下拉 8 款、姿势预设 20 款逐款、右栏「姿势」tab 11 组滑杆、选中高亮（仅 gizmo）、机位 rig 拖动与视距跟随、机位01 命名、自由摆放边界、⌘Z/⌘⇧Z/⌘C/⌘V/Delete、三图与 3D 一致性
+- **遗留 minors（ledger 记录，未修）**：(a) `reducer.ts:128-131` 映射表用普通对象索引，原型键（constructor/toString）绕过宽容/未知→stand，需 `Object.hasOwn`；(b) `reducer.ts:142-144` undo 路径缺 `(sn.shots ?? [])`/`(sh.blocking ?? [])` 守卫；(c) `SkeletonUtils.clone` 按引用共享 `boneInverses`（潜在：未来对克隆调用 `calculateInverses()` 会污染源）；(d) 骨骼 dispose 测试在 node 环境只能断言调用；(e) 左栏「机位」行不清除图元选中（`previs-blocking-editor.tsx:531-534`）→ Delete 可能误删仍选中角色；(f) 2D 画布拖拽仍收边（上条）；(g) `poseLimitFor` 原型键查询 → NaN 滑杆边界（与 (a) 同类）；(h) 姿势滑杆每次 input 事件推一次 undo 快照（T2 既有行为）；(i) `previs-render.ts:128` 示意填充硬编码 `#6366f1`（pre-existing on main，非本分支引入）。ledger 记录的 `preset.controls` 别名问题已在 T6 修复（`previs-blocking-editor.tsx:929` 现为 `{ ...preset.controls }`）
+- **已接受取舍（REF 忠实 / spec 授权）**：程序化回退姿势与 UE4 路径前/后反向 + 左右镜像（REF `ProceduralMannequin` 同行为，仅 GLB 失败时可见）；`reframeCamera` 平移保持原视距（spec §4.2 规定，REF 由新位置重推视距）
 
 ## 7. 已知取舍（明示）
 
