@@ -6,8 +6,13 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 import { TransformControls } from "three/addons/controls/TransformControls.js"
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js"
 
-import { BODY_TYPE_BY_ID } from "@/lib/engine/previs-poses"
 import type { BlockingItem, PrevisShot } from "@/lib/types"
+import {
+  CHARACTER_DEFAULT_TINT,
+  createCharacterModel,
+  ensureUe4Model,
+  isUe4ModelReady,
+} from "./previs-ue4-model"
 
 /** 导出图基准分辨率（按画幅比例派生宽高） */
 const MAP_BASE = 480
@@ -16,7 +21,7 @@ export type MapAspect = keyof typeof ASPECT_RATIOS
 
 const ITEM_COLOR: Record<BlockingItem["kind"], number> = {
   terrain: 0x9ca3af,
-  character: 0x6366f1,
+  character: CHARACTER_DEFAULT_TINT,
   prop: 0xf59e0b,
 }
 
@@ -31,9 +36,6 @@ export function resolveItemColor(item: BlockingItem): number {
   }
   return ITEM_COLOR[item.kind]
 }
-
-/** 深色细节（接缝环/五官/手/脚末端）材质色 */
-const DETAIL_COLOR = 0x070a0f
 
 /** 变换模式：translate / rotate / scale（TransformControls） */
 export type TransformMode = "translate" | "rotate" | "scale"
@@ -81,113 +83,6 @@ function ancestorShotIndex(obj: THREE.Object3D | null): number | null {
   return null
 }
 
-/**
- * 程序化精细人偶：骨盆球 + 躯干双胶囊（腹/胸）+ 深色接缝环 + 头（眼鼻嘴）+ 四肢深色末端。
- *  组原点 = 脚底平面（y=0），高度沿 +y，默认面向 +Z；位置/旋转/缩放由 buildMesh 在父级应用。
- *  层级：根组 = 骨盆 + 双腿；torsoGroup（原点在髋高）内 = 双胶囊躯干 + 深色接缝环 +
- *  头（眼鼻嘴）+ 双臂。
- *
- *  ⚠️ Task 2 过渡占位（v3 controls 换装后）：原 6 关节三元组消费已删除，v3 姿势数据是
- *  单值词表（度），其语义绑定 UE4 骨骼驱动（previs-ue4-rig）；程序化人偶按新词表重驱动
- *  （肢体分肩/肘/髋/膝 + offsetY）与 UE4 素体双路径属 Task 4——本占位先渲染「中性站姿」
- *  静态图元（保证编译与渲染，外形几何沿用旧精细人偶）。体型仅消费 BODY_TYPES 展示身高
- *  （骨缩放以 previs-ue4-rig 表为准）；buildMesh 的 rigKey 重建签名已含 controls，Task 4
- *  接上驱动后姿势变更自动触发重建。
- */
-function buildMannequin(item: BlockingItem): THREE.Group {
-  const g = new THREE.Group()
-  const body = BODY_TYPE_BY_ID[item.bodyType ?? "mannequin"]
-  const h = body?.height ?? 1.8
-  const mat = new THREE.MeshStandardMaterial({ color: resolveItemColor(item), metalness: 0.04, roughness: 0.74 })
-  const dark = new THREE.MeshStandardMaterial({ color: DETAIL_COLOR, metalness: 0.1, roughness: 0.85 })
-
-  /** 四肢（中性站姿）：holder 定位于关节枢轴；胶囊由枢轴下垂 len（下端 = 枢轴 − len）；
-   *  末端深色手/脚球——手球心略高于末端（拳沿臂端下方露 ~0.75rad），脚球心抬至球底恰触地。 */
-  const limb = (
-    len: number, rad: number, pivot: [number, number, number],
-    foot = false,
-  ): THREE.Group => {
-    const holder = new THREE.Group()
-    holder.position.set(...pivot)
-    const seg = new THREE.Mesh(new THREE.CapsuleGeometry(rad, Math.max(0.05, len - rad * 2), 4, 12), mat)
-    seg.position.y = -len / 2
-    holder.add(seg)
-    const tipR = rad * (foot ? 1.05 : 1.2)
-    const tip = new THREE.Mesh(new THREE.SphereGeometry(tipR, 10, 8), dark)
-    tip.position.y = -len + (foot ? tipR : rad * 0.45)
-    holder.add(tip)
-    return holder
-  }
-
-  const hipY = h * 0.52
-  const shoulderY = h * 0.8
-  const dT = shoulderY - hipY // 髋→肩 躯干高度段
-  const chestR = 0.3 * 1 // 横向比例沿用旧 w=1 常量（v3 体型无 width/headSize 字段）
-  const hipR = 0.32
-  const armLen = h * 0.33
-  const armRad = 0.09
-  const legRad = 0.13
-  const shoulderX = 0.33
-  const headR = h * 0.1
-
-  // —— 骨盆（根组）：髋位球 ——
-  const pelvis = new THREE.Mesh(new THREE.SphereGeometry(hipR, 16, 12), mat)
-  pelvis.position.y = hipY - 0.02 * h
-  g.add(pelvis)
-
-  // —— 躯干关节组（原点 = 髋高；中性站姿无旋转）——
-  const torsoGroup = new THREE.Group()
-  torsoGroup.position.y = hipY
-  g.add(torsoGroup)
-
-  // 下腹胶囊（腰→下胸）与上胸胶囊（胸→肩；顶点收在头底之下，避免吞没头部）
-  const belly = new THREE.Mesh(new THREE.CapsuleGeometry(chestR * 0.92, Math.max(0.05, dT * 0.62), 4, 12), mat)
-  belly.position.y = dT * 0.31
-  torsoGroup.add(belly)
-  const chest = new THREE.Mesh(new THREE.CapsuleGeometry(chestR * 0.8, Math.max(0.05, dT * 0.34), 4, 12), mat)
-  chest.position.y = dT * 0.62
-  torsoGroup.add(chest)
-
-  // 深色接缝环：管 0.018w 微嵌体表、外露成细环——腰环贴腹段、颈环贴胸段上缘
-  const seam = (y: number, r: number) => {
-    const t = new THREE.Mesh(new THREE.TorusGeometry(r, 0.018, 6, 20), dark)
-    t.rotation.x = Math.PI / 2
-    t.position.y = y
-    torsoGroup.add(t)
-  }
-  seam(dT * 0.55, chestR * 0.94) // 腰环（腹 0.92·chestR 截面外 +6mm）
-  seam(dT * 0.95, chestR * 0.76) // 颈环（胸 0.8·chestR 截面外 +5mm）
-
-  // —— 头（随躯干组）：球 + 深色五官（眼/鼻/嘴，+Z 面向）——
-  const headGroup = new THREE.Group()
-  headGroup.position.set(0, dT + headR * 1.15, 0) // 世界 y = shoulderY + 1.15·headR（头顶 ≈ h）
-  const skull = new THREE.Mesh(new THREE.SphereGeometry(headR, 18, 14), mat)
-  headGroup.add(skull)
-  const fz = headR * 0.86 // 眼 z（球心嵌入颅面，微凸）
-  const eyeY = headR * 0.16
-  const eyeX = headR * 0.34
-  const mk = (x: number, y: number, z: number, r: number) => {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6), dark)
-    m.position.set(x, y, z)
-    headGroup.add(m)
-  }
-  mk(-eyeX, eyeY, fz, headR * 0.16) // 眼
-  mk(eyeX, eyeY, fz, headR * 0.16) // 眼
-  mk(0, -eyeY * 0.3, headR * 0.95, headR * 0.1) // 鼻（凸出颅面）
-  mk(0, -eyeY * 1.5, headR * 0.98, headR * 0.14) // 嘴（凸出颅面）
-  torsoGroup.add(headGroup)
-
-  // —— 手臂（肩高挂点，随躯干组）——
-  torsoGroup.add(limb(armLen, armRad, [-shoulderX, dT, 0]))
-  torsoGroup.add(limb(armLen, armRad, [shoulderX, dT, 0]))
-
-  // —— 腿（髋高挂点，直挂根组——不随躯干转）——
-  g.add(limb(hipY, legRad, [-0.17, hipY, 0], true))
-  g.add(limb(hipY, legRad, [0.17, hipY, 0], true))
-
-  return g
-}
-
 /** 包围盒线框（选中高亮与边缘导出共用）：Group 取整体包围盒，Mesh 直接取几何边 */
 function buildBoundsEdges(obj: THREE.Object3D): THREE.LineSegments {
   const box = new THREE.Box3().setFromObject(obj)
@@ -207,22 +102,27 @@ function buildBoundsEdges(obj: THREE.Object3D): THREE.LineSegments {
   )
 }
 
-/** 图元 → 3D 网格：地形=薄板，角色=程序化精细人偶，道具=方体。
+/** 角色模型实例 → 专属资源释放函数（UE4 克隆材质等；见 previs-ue4-model 释放契约）。
+ *  WeakMap 而非 userData：释放函数不可序列化，且随对象回收自动清理。 */
+const modelDisposers = new WeakMap<THREE.Object3D, () => void>()
+
+/** 图元 → 3D 网格：地形=薄板，角色=UE4 素体（失败/未就绪回退程序化人偶），道具=方体。
  *  按 v2 变换直接落地：y 即数据真实高度（角色=脚底平面，prop/terrain=几何中心），无隐式抬升；
  *  角色/道具 castShadow（地面 receiveShadow，见初始化）；材质统一 meshStandardMaterial。 */
 function buildMesh(item: BlockingItem): THREE.Object3D {
   if (item.kind === "character") {
-    const g = buildMannequin(item)
-    g.userData.itemId = item.id
-    g.traverse((o) => {
+    const { object, dispose } = createCharacterModel(item)
+    modelDisposers.set(object, dispose)
+    object.userData.itemId = item.id
+    object.traverse((o) => {
       if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true
     })
     const [x, y, z] = item.position
-    g.position.set(x, y, z) // v2：y = 脚底高度
+    object.position.set(x, y, z) // v2：y = 脚底高度
     const [rx, ry, rz] = item.rotation
-    g.rotation.set(rx * DEG, ry * DEG, rz * DEG)
-    g.scale.set(item.scale[0], item.scale[1], item.scale[2])
-    return g
+    object.rotation.set(rx * DEG, ry * DEG, rz * DEG)
+    object.scale.set(item.scale[0], item.scale[1], item.scale[2])
+    return object
   }
   let geo: THREE.BufferGeometry
   if (item.kind === "terrain") {
@@ -417,6 +317,25 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
     const emitTransform = (id: string, patch: ItemPatch, commit: boolean) => {
       propsRef.current.onTransform?.(id, patch, commit)
     }
+
+    // —— UE4 素体就绪代数：初始渲染一律程序化；ensureUe4Model 成功后 +1 → 触发一次 items 重建 ——
+    // 初始值读 isUe4ModelReady()：GLB 已缓存（如视口重挂载）时直接以 UE4 起步，避免二次重建。
+    const [ue4Epoch, setUe4Epoch] = React.useState(() => (isUe4ModelReady() ? 1 : 0))
+    React.useEffect(() => {
+      let alive = true
+      ensureUe4Model().then(
+        () => {
+          // e===0 才 +1（同值 bail out）——React 严格模式双跑也只重建一次
+          if (alive) setUe4Epoch((e) => (e === 0 ? 1 : e))
+        },
+        () => {
+          // GLB 加载失败：永久保持程序化回退（不重试、不抛出）
+        },
+      )
+      return () => {
+        alive = false
+      }
+    }, [])
 
     // —— 初始化场景与交互层（一次） ——
     React.useEffect(() => {
@@ -616,12 +535,19 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       }
     }
 
-    /** 递归释放几何与材质（重建/移除时防 GPU 缓冲泄漏）；CSS2D 子标签连带清 DOM */
+    /** 递归释放几何与材质（重建/移除时防 GPU 缓冲泄漏）；CSS2D 子标签连带清 DOM。
+     *  角色模型走 createCharacterModel 的专属释放（UE4 几何/源材质为共享资源，不可在此释放）。 */
     function disposeObject(obj: THREE.Object3D) {
       const s = stateRef.current
       if (s?.gizmo.object === obj) s.gizmo.detach()
+      obj.traverse(removeCSS2DLabel)
+      const modelDispose = modelDisposers.get(obj)
+      if (modelDispose) {
+        modelDisposers.delete(obj)
+        modelDispose()
+        return
+      }
       obj.traverse((o) => {
-        removeCSS2DLabel(o)
         const m = o as THREE.Mesh
         if (m.geometry) m.geometry.dispose()
         const mat = m.material as THREE.Material | THREE.Material[] | undefined
@@ -637,10 +563,10 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       const keep = new Set<string>()
       for (const item of propsRef.current.items) {
         keep.add(item.id)
-        // 姿态签名：体型/姿势/关节角度/颜色任一变化 → 重建人偶
+        // 姿态签名：渲染路径代数（程序化→UE4）/体型/姿势/关节角度/颜色任一变化 → 重建人偶
         const rigKey =
           item.kind === "character"
-            ? `${item.bodyType ?? ""}|${item.poseId ?? ""}|${JSON.stringify(item.controls ?? {})}|${item.color ?? ""}`
+            ? `${ue4Epoch}|${item.bodyType ?? ""}|${item.poseId ?? ""}|${JSON.stringify(item.controls ?? {})}|${item.color ?? ""}`
             : ""
         let mesh = st.itemMeshes.get(item.id)
         if (!mesh) {
@@ -669,7 +595,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         }
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [items, selectedId])
+    }, [items, selectedId, ue4Epoch])
 
     // —— CSS2D 角色名字标签（头顶 Box3 top + 0.15；跟随图元拖拽/缩放实时重挂） ——
     React.useEffect(() => {
@@ -711,7 +637,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         label.position.y = labelLocalY(mesh)
         label.visible = true
       }
-    }, [items, showLabels])
+    }, [items, showLabels, ue4Epoch])
 
     // —— 选中高亮：独立图层（不进导出画面） ——
     React.useEffect(() => {
@@ -733,7 +659,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         hl.scale.copy(mesh.scale)
         st.hlGroup.add(hl)
       }
-    }, [items, selectedId])
+    }, [items, selectedId, ue4Epoch])
 
     // —— 机位 rig 同步（每 shot 一个 rig + 机位N 标签；rig 可见性随 viewMode） ——
     React.useEffect(() => {
@@ -837,7 +763,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         st.gizmo.detach()
       }
       st.gizmo.setMode(propsRef.current.transformMode ?? "translate")
-    }, [selectedId, transformMode, items])
+    }, [selectedId, transformMode, items, ue4Epoch])
 
     // —— 拾取修复与手势仲裁（点击 vs ≥5px 拖拽；gizmo 激活时本通道让位） ——
     const pickAt = (clientX: number, clientY: number): { id: string | null; obj: THREE.Object3D | null } => {
