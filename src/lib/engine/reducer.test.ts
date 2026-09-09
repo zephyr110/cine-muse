@@ -192,6 +192,27 @@ describe("migrateAppState", () => {
     expect(item).not.toHaveProperty("rotationY")
   })
 
+  it("损坏的撤销快照（缺 shots/blocking 或 previsUndo 缺 past）迁移不抛错，按空数组兜底", () => {
+    const legacy = {
+      version: 1,
+      projects: [],
+      previsUndo: {
+        past: [
+          { stageId: "s1", shots: [{ shotIndex: 0, blocking: undefined }] }, // 缺 blocking
+          { stageId: "s2" }, // 缺 shots
+        ],
+        future: [],
+      },
+    }
+    const migrated = migrateAppState(legacy as unknown)
+    expect(migrated.version).toBe(3)
+    expect(migrated.previsUndo.past[0].shots[0].blocking).toEqual([])
+    expect(migrated.previsUndo.past[1].shots).toEqual([])
+    // 整个撤销栈缺失（previsUndo: {}）同样兜底为空栈
+    const empty = migrateAppState({ version: 1, projects: [], previsUndo: {} } as unknown)
+    expect(empty.previsUndo).toEqual({ past: [], future: [] })
+  })
+
   it("PREVIS_UNDO 恢复上一次提交的摆位，PREVIS_REDO 重做", () => {
     const state = stateWithPrevis()
     const p = state.projects[0]

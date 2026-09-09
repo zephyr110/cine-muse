@@ -103,17 +103,18 @@ function migrateBlockingItemV2(item: Record<string, unknown>): Record<string, un
 
 /** v1 撤销栈中的 blocking 快照 → v2（与产物同规则）：旧栈残留 v1 项会在撤销时污染 v2 镜头 */
 function migratePrevisUndoV2(u: AppState["previsUndo"]): AppState["previsUndo"] {
-  const conv = (snaps: PrevisUndoSnapshot[]) =>
-    snaps.map((sn) => ({
+  const conv = (snaps: PrevisUndoSnapshot[] | undefined) =>
+    (snaps ?? []).map((sn) => ({
       ...sn,
-      shots: sn.shots.map((sh) => ({
+      // 与产物迁移同规则的外部数据兜底：损坏快照缺 shots/blocking 时按空数组处理（不抛）
+      shots: (sn.shots ?? []).map((sh) => ({
         ...sh,
-        blocking: sh.blocking.map(
+        blocking: (sh.blocking ?? []).map(
           (b) => migrateBlockingItemV2(b as unknown as Record<string, unknown>) as unknown as BlockingItem,
         ),
       })),
     }))
-  return { past: conv(u.past), future: conv(u.future) }
+  return { past: conv(u?.past), future: conv(u?.future) }
 }
 
 /** v2 blocking 项 → v3：体型/姿势 id 按 spec §3.2/§3.3 表换装，controls 由目标新预设重派生。
@@ -141,8 +142,8 @@ function migrateBlockingItemV3(item: Record<string, unknown>): Record<string, un
 
 /** v2 撤销栈中的 blocking 快照 → v3（与产物同规则）：旧栈残留 v2 词表项会在撤销时污染 v3 镜头 */
 function migratePrevisUndoV3(u: AppState["previsUndo"]): AppState["previsUndo"] {
-  const conv = (snaps: PrevisUndoSnapshot[]) =>
-    snaps.map((sn) => ({
+  const conv = (snaps: PrevisUndoSnapshot[] | undefined) =>
+    (snaps ?? []).map((sn) => ({
       ...sn,
       // 与产物迁移同规则的外部数据兜底：损坏快照缺 shots/blocking 时按空数组处理（不抛）
       shots: (sn.shots ?? []).map((sh) => ({
@@ -152,7 +153,7 @@ function migratePrevisUndoV3(u: AppState["previsUndo"]): AppState["previsUndo"] 
         ),
       })),
     }))
-  return { past: conv(u.past), future: conv(u.future) }
+  return { past: conv(u?.past), future: conv(u?.future) }
 }
 
 /** 版本化迁移：v1 → v2 补字段默认值（references 等）并将 previs blocking 项升为全 3D 形状；
