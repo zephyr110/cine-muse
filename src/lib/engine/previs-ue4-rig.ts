@@ -55,7 +55,7 @@ function degreesToRadians(value: number) {
 }
 
 /**
- * 移植自 REF mannequinPose.ts:12-18（getBodyTypePoseLimit）
+ * 移植自 REF mannequinPose.ts:12-21（getBodyTypePoseLimit）
  * 姿势限位（度）：chibi ±58 / child ±72 / 其余 ±90（normalize 语义并入默认 90）。
  */
 function getBodyTypePoseLimit(bodyType: Ue4BodyType): number {

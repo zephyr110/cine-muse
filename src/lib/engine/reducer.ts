@@ -121,14 +121,19 @@ function migratePrevisUndoV2(u: AppState["previsUndo"]): AppState["previsUndo"] 
  * - 姿势：命中 POSE_ID_MIGRATION_V2 才替换，未知名（或缺失）置 "stand"（v3 默认预设）
  * - controls：整体替换为 `{ ...新预设 controls }`（spec §3.4「微调归并」：v2 自定义微调
  *   不保留，重派生新预设字典）；深拷贝——预设对象是全局共享单例，直接别名进状态会被
- *   后续就地写回污染预设表。v2 旧预设相等性判定按 plan 可省（最终态一致）。 */
+ *   后续就地写回污染预设表。v2 旧预设相等性判定按 plan 可省（最终态一致）。
+ * - 两张映射表一律 Object.hasOwn 查表：原型键（"constructor"/"toString" 等）不是合法映射项，
+ *   必须走「未知名」分支，否则会把 Object.prototype 的函数值写进状态。 */
 function migrateBlockingItemV3(item: Record<string, unknown>): Record<string, unknown> {
   const next = { ...item }
   const bodyType = next.bodyType
-  if (typeof bodyType === "string" && BODY_TYPE_MIGRATION_V2[bodyType]) {
+  if (typeof bodyType === "string" && Object.hasOwn(BODY_TYPE_MIGRATION_V2, bodyType)) {
     next.bodyType = BODY_TYPE_MIGRATION_V2[bodyType]
   }
-  const poseId = typeof next.poseId === "string" ? (POSE_ID_MIGRATION_V2[next.poseId] ?? "stand") : "stand"
+  const poseId =
+    typeof next.poseId === "string" && Object.hasOwn(POSE_ID_MIGRATION_V2, next.poseId)
+      ? POSE_ID_MIGRATION_V2[next.poseId]
+      : "stand"
   next.poseId = poseId
   next.controls = { ...(POSE_PRESET_BY_ID[poseId]?.controls ?? {}) }
   return next
@@ -139,9 +144,10 @@ function migratePrevisUndoV3(u: AppState["previsUndo"]): AppState["previsUndo"] 
   const conv = (snaps: PrevisUndoSnapshot[]) =>
     snaps.map((sn) => ({
       ...sn,
-      shots: sn.shots.map((sh) => ({
+      // 与产物迁移同规则的外部数据兜底：损坏快照缺 shots/blocking 时按空数组处理（不抛）
+      shots: (sn.shots ?? []).map((sh) => ({
         ...sh,
-        blocking: sh.blocking.map(
+        blocking: (sh.blocking ?? []).map(
           (b) => migrateBlockingItemV3(b as unknown as Record<string, unknown>) as unknown as BlockingItem,
         ),
       })),

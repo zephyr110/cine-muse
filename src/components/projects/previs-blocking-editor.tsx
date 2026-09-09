@@ -58,9 +58,12 @@ const FOV_RANGE = { min: 5, max: 150 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100
 const clamp = (v: number, r: { min: number; max: number }) => Math.min(r.max, Math.max(r.min, v))
-/** 体型转角限位（度）：姿势滑杆按此收窄；越限预设值仅提示不截断（用户写入才按滑杆范围钳制） */
-const poseLimitFor = (bodyType: string | undefined) =>
-  POSE_LIMIT_BY_BODY_TYPE[(bodyType ?? "mannequin") as Ue4BodyType] ?? 90
+/** 体型转角限位（度）：姿势滑杆按此收窄；越限预设值仅提示不截断（用户写入才按滑杆范围钳制）。
+ *  仅认表内自有键——原型键（"constructor"/"toString" 等）回落默认 90，否则会取到函数使滑杆 min/max 变 NaN */
+const poseLimitFor = (bodyType: string | undefined) => {
+  const id = (bodyType ?? "mannequin") as Ue4BodyType
+  return Object.hasOwn(POSE_LIMIT_BY_BODY_TYPE, id) ? POSE_LIMIT_BY_BODY_TYPE[id] : 90
+}
 /** 机位序号 → 两位补零标签（与视口 rig 标签同源，spec §4.3） */
 const rigLabel = (index: number) => `机位${String(index + 1).padStart(2, "0")}`
 /** 布景项 id：时间戳 + 随机后缀（新增/粘贴角色唯一） */
@@ -429,7 +432,8 @@ function BlockingShotEditor({
 
   const draggable = items.filter((b) => b.kind !== "terrain")
 
-  /** 指针坐标 → 世界 x/z（renderPreviewSvg.project 的逆运算，限制在画布内）。
+  /** 指针坐标 → 世界 x/z（renderPreviewSvg.project 的逆运算，不钳制——spec §4.4 自由摆放：
+   *  指针捕获保证拖出画布仍连续跟手；坐标可越出 SVG 视野，2D 图按 viewBox 裁切、3D 视口完整可见）。
    *  容器宽高比可能偏离 16:9（如超宽屏下 max-h-full 钳制）：按 SVG 实际
    *  适配后的内嵌矩形（letterbox 居中）映射，而非整个容器，保证任意窗口比例下精确。 */
   const worldFromEvent = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -439,8 +443,8 @@ function BlockingShotEditor({
     const fitH = SVG_H * scale
     const offsetX = (rect.width - fitW) / 2
     const offsetY = (rect.height - fitH) / 2
-    const px = Math.min(SVG_W, Math.max(0, ((e.clientX - rect.left - offsetX) / fitW) * SVG_W))
-    const py = Math.min(SVG_H, Math.max(0, ((e.clientY - rect.top - offsetY) / fitH) * SVG_H))
+    const px = ((e.clientX - rect.left - offsetX) / fitW) * SVG_W
+    const py = ((e.clientY - rect.top - offsetY) / fitH) * SVG_H
     return { x: round2((px - SVG_W / 2) / PX_PER_UNIT), z: round2(1 - (py - SVG_H / 2) / PX_PER_UNIT) }
   }
 
@@ -526,9 +530,11 @@ function BlockingShotEditor({
     setSelected(id)
   }
 
-  /** 左栏机位行点击：切换分镜；fullscreen 下同时选中其 rig（spec §4.2「点 rig 或机位列表」；
+  /** 左栏机位行点击：切换分镜 + 清图元选中（与视口 rig 点击同口径——rig 选中期间
+   *  Delete 不得误删上次选中的角色）；fullscreen 下同时选中其 rig（spec §4.2「点 rig 或机位列表」；
    *  inline 无 3D 视口与 rig，仅作镜头切换，保持既有 parity） */
   const selectCameraRow = (index: number) => {
+    setSelected(null)
     onShotIndexChange(index)
     if (variant === "fullscreen") onRigSelect?.(index)
   }

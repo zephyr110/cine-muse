@@ -381,6 +381,16 @@ describe("migrateAppState v2 → v3（词表换装）", () => {
     expect(migratedChar(v2State(v2Char({ poseId: undefined }))).poseId).toBe("stand")
   })
 
+  it("原型键不绕过迁移：bodyType/poseId 为 constructor/toString 时按未知名处理", () => {
+    const item = migratedChar(v2State(v2Char({ bodyType: "constructor", poseId: "toString" })))
+    // 体型：未知名宽容原样保留——必须是字符串，而不是 Object.prototype 上的函数
+    expect(typeof item.bodyType).toBe("string")
+    expect(item.bodyType).toBe("constructor")
+    // 姿势：未命中映射（原型键不算命中）→ v3 默认 stand（空 controls 预设）
+    expect(item.poseId).toBe("stand")
+    expect(item.controls).toEqual({})
+  })
+
   it("controls 由新预设重派生：等于预设字典、单值、深拷贝（不别名共享预设）", () => {
     const item = migratedChar(v2State(v2Char({ poseId: "kneel", controls: { "leftKnee.bend": [126, 0, 0] } })))
     expect(item.poseId).toBe("kneel-two")
