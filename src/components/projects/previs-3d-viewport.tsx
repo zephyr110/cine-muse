@@ -62,7 +62,7 @@ const CLICK_SLOP = 5
 const HOME_VIEW = { position: new THREE.Vector3(8, 8, 10), target: new THREE.Vector3(0, 1, 0), fov: 45 }
 /** 未接线 shots prop 时的稳定空数组（防每渲染新 [] 触发 effect） */
 const EMPTY_SHOTS: PrevisShot[] = []
-/** 机位标签锚点：rig 原点上方偏移（世界坐标；命名补零由 T6 处理） */
+/** 机位标签锚点：rig 原点上方偏移（世界坐标；spec §4.3 保留 +0.55） */
 const RIG_LABEL_OFFSET_Y = 0.55
 
 /** 从命中对象向上找携带 userData.itemId 的祖先（rig/图元 均可） */
@@ -366,7 +366,7 @@ export interface PrevisViewportHandle {
  * - 布景项图元 + 地面网格 + OrbitControls 环绕（viewMode=director）
  * - TransformControls（translate/rotate/scale）+ 地面直拖；对象级别 onTransform 帧/终帧派发
  * - 每 shot 一个机位 rig（线框摄像机+视锥+隐形命中盒，点击 = onSelectShot）
- * - CSS2D 名字标签（角色头顶 / 机位N）；右上角轴向视图 gizmo（仅 director）
+ * - CSS2D 名字标签（角色头顶 / 机位NN）；右上角轴向视图 gizmo（仅 director）
  * - viewMode=camera：相机置入 shot 机位（position/target/fov），orbit 关闭；返回 director 恢复快照
  * - captureMaps()：按画幅真实渲染 布景/深度/边缘 三图（排除全部 hideFromViewportCapture 对象）
  */
@@ -830,10 +830,10 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         rig.quaternion.copy(getRigQuaternion(shot.camera.position, shot.camera.target))
         rig.userData.shotIndex = i
         rig.userData.itemId = "__camera__"
-        // 机位N 标签（世界坐标锚定在 rig 正上方；CSS2D 独立 DOM 层）
+        // 机位NN 标签（两位补零；世界坐标锚定在 rig 正上方 +0.55；CSS2D 独立 DOM 层）
         let label = st.rigLabels.get(i)
         if (!label) {
-          label = new CSS2DObject(makeLabelEl(`机位${i + 1}`))
+          label = new CSS2DObject(makeLabelEl(`机位${String(i + 1).padStart(2, "0")}`))
           st.labelLayer.add(label)
           st.rigLabels.set(i, label)
         }

@@ -3,6 +3,7 @@
 import * as React from "react"
 import {
   CameraIcon,
+  ChevronRightIcon,
   ClipboardIcon,
   CopyIcon,
   FrameIcon,
@@ -21,7 +22,14 @@ import { toast } from "@/components/ui/toast"
 import { useApp } from "@/lib/store"
 import { injectMarkerIds, renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { isPrevisArtifact } from "@/lib/engine/previs-types"
-import { BODY_TYPES, POSE_GROUPS, POSE_PRESETS, POSE_PRESET_BY_ID } from "@/lib/engine/previs-poses"
+import {
+  BODY_TYPES,
+  POSE_GROUPS,
+  POSE_LIMIT_BY_BODY_TYPE,
+  POSE_PRESETS,
+  POSE_PRESET_BY_ID,
+} from "@/lib/engine/previs-poses"
+import type { Ue4BodyType } from "@/lib/engine/previs-ue4-rig"
 import type { BlockingItem, PrevisShot, WorkflowStage } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -41,14 +49,20 @@ const SVG_W = 480
 const SVG_H = 270
 const PX_PER_UNIT = 48
 
-/** 可编辑范围：布景项与拖拽的"画布内钳制"一致；机位允许离画布更远 */
+/** 新增角色网格落位范围（仅 addCharacter 的自动摆位使用）：用户提交/拖拽已不再钳制（spec §4.4） */
 const X_RANGE = { min: -SVG_W / 2 / PX_PER_UNIT, max: SVG_W / 2 / PX_PER_UNIT } // [-5, 5]
 const Z_RANGE = { min: 1 - SVG_H / 2 / PX_PER_UNIT, max: 1 + SVG_H / 2 / PX_PER_UNIT } // [-1.8125, 3.8125]
+/** 机位/FOV 仍按范围钳制（相机参数非自由摆放语义） */
 const CAM_RANGE = { min: -20, max: 20 }
 const FOV_RANGE = { min: 5, max: 150 }
 
 const round2 = (v: number) => Math.round(v * 100) / 100
 const clamp = (v: number, r: { min: number; max: number }) => Math.min(r.max, Math.max(r.min, v))
+/** 体型转角限位（度）：姿势滑杆按此收窄；越限预设值仅提示不截断（用户写入才按滑杆范围钳制） */
+const poseLimitFor = (bodyType: string | undefined) =>
+  POSE_LIMIT_BY_BODY_TYPE[(bodyType ?? "mannequin") as Ue4BodyType] ?? 90
+/** 机位序号 → 两位补零标签（与视口 rig 标签同源，spec §4.3） */
+const rigLabel = (index: number) => `机位${String(index + 1).padStart(2, "0")}`
 /** 布景项 id：时间戳 + 随机后缀（新增/粘贴角色唯一） */
 const randomItemId = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
 
@@ -297,6 +311,7 @@ function TransformGroup({
 /** 单镜头编辑：拖拽/选中微调/坐标输入 + 机位参数 + 重新渲染；inline 堆叠 / fullscreen 三栏 */
 function BlockingShotEditor({
   projectId, stage, shotIndex, shot, shots, shotsCount, onShotIndexChange, onDone, variant = "inline",
+  rigSelected = false, onRigSelect,
 }: {
   projectId: string
   stage: WorkflowStage
@@ -307,6 +322,10 @@ function BlockingShotEditor({
   onShotIndexChange: (index: number) => void
   onDone: () => void
   variant?: "inline" | "fullscreen"
+  /** 当前镜头机位 rig 是否选中——父级持有：编辑器按 shot 重建（key=index），选中态须跨重建存活 */
+  rigSelected?: boolean
+  /** rig 选中变更：number = 选中该索引机位；null = 清除（图元/空点/切镜头） */
+  onRigSelect?: (index: number | null) => void
 }) {
   const { state, dispatch } = useApp()
   const [items, setItems] = React.useState<BlockingItem[]>(shot.blocking)
@@ -378,6 +397,12 @@ function BlockingShotEditor({
     viewportRef.current?.setViewAspect(ASPECT_RATIO[aspect])
   }, [aspect, centerTab, variant])
 
+  /** 实际生效的变换模式：选中机位 rig 时缩放无效（spec §4.2）→ 派生回退 translate。
+   *  派生而非 effect 同步：无额外渲染，工具条高亮与视口 gizmo 模式始终一致；
+   *  取消选中后恢复用户此前选择的模式（scale 按钮在选中 rig 时另有 toast 守卫，不会切模式）。 */
+  const effectiveTransformMode: TransformMode =
+    rigSelected && transformMode === "scale" ? "translate" : transformMode
+
   /** 本地编辑态提交到 reducer（一次逻辑编辑仅产生一个撤销快照：
    *   BLOCKING 先推快照（编辑前状态），CAMERA 复用同一快照不重复推；
    *   与 reducer 当前状态一致时跳过（无变更的「重新渲染」不产生冗余快照） */
@@ -428,6 +453,7 @@ function BlockingShotEditor({
     if (!id) return
     e.currentTarget.setPointerCapture(e.pointerId)
     setSelected(id)
+    onRigSelect?.(null) // 图元选中 → 清 rig 选中（与视口选中同一互斥策略）
     setDragId(id)
   }
 
@@ -443,17 +469,17 @@ function BlockingShotEditor({
     setDragId(null)
   }
 
+  /** 左栏 X/Z 字段提交：不钳制（spec §4.4 自由摆放），y 保留真实高度 */
   const setPosition = (id: string, axis: 0 | 2, value: number) => {
     if (!Number.isFinite(value)) return
-    const range = axis === 0 ? X_RANGE : Z_RANGE
     const next = items.map((b) =>
       b.id === id
         ? {
             ...b,
             position:
               axis === 0
-                ? ([round2(clamp(value, range)), b.position[1], b.position[2]] as [number, number, number])
-                : ([b.position[0], b.position[1], round2(clamp(value, range))] as [number, number, number]),
+                ? ([round2(value), b.position[1], b.position[2]] as [number, number, number])
+                : ([b.position[0], b.position[1], round2(value)] as [number, number, number]),
           }
         : b,
     )
@@ -482,6 +508,31 @@ function BlockingShotEditor({
     commit(itemsRef.current, camera)
   }
 
+  /** rig 点击标记：视口同一手势内先 onSelectShot(i) 再 onSelect(null)——后者是「清图元选中」
+   *  的伴随调用，不得当作空点清掉刚选中的 rig（两者同步顺序固定，故用 ref 消歧） */
+  const rigClickRef = React.useRef(false)
+
+  /** 视口 rig 点击：选中该机位（父级持有）+ 切换分镜（沿用 shotIndex 选择语义） */
+  const handleSelectShot = (index: number) => {
+    rigClickRef.current = true
+    onRigSelect?.(index)
+    onShotIndexChange(index)
+  }
+
+  /** 视口选中回调（图元/空点）：图元选中与 rig 选中互斥——任何非 rig 点击都清 rig 选中 */
+  const handleSelect = (id: string | null) => {
+    if (rigClickRef.current) rigClickRef.current = false
+    else onRigSelect?.(null)
+    setSelected(id)
+  }
+
+  /** 左栏机位行点击：切换分镜；fullscreen 下同时选中其 rig（spec §4.2「点 rig 或机位列表」；
+   *  inline 无 3D 视口与 rig，仅作镜头切换，保持既有 parity） */
+  const selectCameraRow = (index: number) => {
+    onShotIndexChange(index)
+    if (variant === "fullscreen") onRigSelect?.(index)
+  }
+
   /** 更新选中角色：体型/姿势/关节滑杆（materialized controls） */
   const updateCharacter = (id: string, patch: Partial<Pick<BlockingItem, "bodyType" | "poseId" | "controls">>) => {
     const next = items.map((b) => (b.id === id ? { ...b, ...patch } : b))
@@ -506,11 +557,7 @@ function BlockingShotEditor({
         b.id === selected
           ? {
               ...b,
-              position: [
-                round2(clamp(b.position[0] + d[0], X_RANGE)),
-                b.position[1],
-                round2(clamp(b.position[2] + d[1], Z_RANGE)),
-              ],
+              position: [round2(b.position[0] + d[0]), b.position[1], round2(b.position[2] + d[1])],
             }
           : b,
       ),
@@ -542,7 +589,7 @@ function BlockingShotEditor({
   /**
    * 视口 onTransform 统一回写：commit=false 帧只驱动 three 侧视觉（不写回——
    * 无中间态 → 撤销单步、输入框/标签不随拖动抖动、reducer 不逐帧重渲染 SVG）；
-   * commit=true 终帧按既有画布范围钳制 x/z（y 保留真实高度）后一次落库。
+   * commit=true 终帧一次落库（x/z 不钳制——spec §4.4 自由摆放；y 保留真实高度）。
    */
   const handleTransform = (
     id: string,
@@ -557,17 +604,31 @@ function BlockingShotEditor({
     const next = itemsRef.current.map((b) => {
       if (b.id !== id) return b
       const position = patch.position
-        ? ([
-            round2(clamp(patch.position[0], X_RANGE)),
-            patch.position[1],
-            round2(clamp(patch.position[2], Z_RANGE)),
-          ] as [number, number, number])
+        ? ([round2(patch.position[0]), patch.position[1], round2(patch.position[2])] as [number, number, number])
         : b.position
       return { ...b, position, rotation: patch.rotation ?? b.rotation, scale: patch.scale ?? b.scale }
     })
     if (JSON.stringify(next) === JSON.stringify(itemsRef.current)) return // 无实质变更：不占撤销栈
     setItems(next)
     dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: next, commit: true })
+  }
+
+  /**
+   * 视口机位 rig 拖动回写（onMoveRig）：commit=false 帧不落库——rig 拖动是视口内部视觉随动，
+   * store 保持拖动前状态 → 终帧一次落库（commit:true）= 单步撤销（与 handleTransform 同口径）。
+   * 视口 rig 同步 effect 依赖 [shots, viewMode, showLabels]，shots 为 store 引用、帧内不变，
+   * 故不会把 rig 拉回旧位姿（T5 交接的「或至少」路径）。
+   */
+  const handleMoveRig = (index: number, cam: PrevisShot["camera"], commitFlag: boolean) => {
+    if (commitFlag !== true) return
+    if (index !== shotIndex) {
+      // 理论上不可达（点 rig 即切换 shot → 本编辑器重建）；兜底按目标 shotIndex 直落相机
+      dispatch({ type: "UPDATE_PREVIS_CAMERA", projectId, stageId: stage.id, shotIndex: index, camera: cam, commit: true })
+      return
+    }
+    if (JSON.stringify(cam) === JSON.stringify(camera)) return // 无实质变更：不占撤销栈
+    setCamera(cam) // 本地读数先行（右栏机位面板即时刷新）
+    dispatch({ type: "UPDATE_PREVIS_CAMERA", projectId, stageId: stage.id, shotIndex, camera: cam, commit: true })
   }
 
   /** 变换字段（右栏）提交 → 同一 commit 通路 */
@@ -600,6 +661,7 @@ function BlockingShotEditor({
     const next = [...items, item]
     setItems(next)
     setSelected(id)
+    onRigSelect?.(null) // 新角色自动选中 → 清 rig 选中（选中态互斥）
     setOpenMenu(null)
     dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: next, commit: true })
   }
@@ -631,18 +693,15 @@ function BlockingShotEditor({
       ...source,
       id: randomItemId("c"),
       name: `${source.name} 副本`,
-      // v2：粘贴保留源 y（几何中心/脚底语义）；x/z 沿用旧的错位 +1 惯例
-      position: [
-        round2(clamp(source.position[0] + 1, X_RANGE)),
-        source.position[1],
-        round2(clamp(source.position[2] + 1, Z_RANGE)),
-      ],
+      // v2：粘贴保留源 y（几何中心/脚底语义）；x/z 沿用旧的错位 +1 惯例（不钳制，spec §4.4）
+      position: [round2(source.position[0] + 1), source.position[1], round2(source.position[2] + 1)],
       rotation: [...source.rotation] as [number, number, number],
       scale: [...source.scale] as [number, number, number],
     }
     const next = [...items, copy]
     setItems(next)
     setSelected(copy.id)
+    onRigSelect?.(null) // 粘贴副本自动选中 → 清 rig 选中（选中态互斥）
     setOpenMenu(null)
     commit(next, camera)
   }
@@ -789,7 +848,10 @@ function BlockingShotEditor({
         draggable.map((b) => (
           <div
             key={b.id}
-            onClick={() => setSelected(selected === b.id ? null : b.id)}
+            onClick={() => {
+              setSelected(selected === b.id ? null : b.id)
+              onRigSelect?.(null) // 图元选中 → 清 rig 选中（selectedShotId 不得重新断言过期 rig）
+            }}
             className={cn(
               "flex cursor-pointer items-center gap-2 rounded-md border px-2 py-1",
               selected === b.id ? "border-primary/60 bg-primary/5" : "border-border/60",
@@ -837,10 +899,10 @@ function BlockingShotEditor({
       />
     ) : null
 
-  /** 姿态面板：体型 + 姿势预设 + 词表单值滑杆（仅选中角色，fullscreen）。
-   *  ⚠️ Task 2 过渡 UI：滑杆区为 POSE_GROUPS 11 组的通用平铺（按 def 的 min/max，单值写回
-   *  v3 controls；body.offsetY 按米显示、步进 0.01）。折叠分节 + 按体型限位收窄等面板精调
-   *  属 Task 6（plan U4-T6 Step 2），届时整体替换本滑杆区。 */
+  /** 姿态面板：体型 + 20 预设 + 11 组折叠滑杆（仅选中角色，fullscreen）。
+   *  滑杆值域按 POSE_GROUPS def 取，转角再按当前体型限位（chibi ±58 / child ±72 / 其余 ±90）收窄；
+   *  越限预设值（如 kneel-two 膝 126）读数显示真值并标黄，仅用户写入时按滑杆范围取值。
+   *  写回 v3 controls 单值键（整体 blocking 替换语义不变）。 */
   const poseEl =
     variant === "fullscreen" && selectedItem?.kind === "character" ? (
       <div className="rounded-md border border-border/60 p-2">
@@ -863,7 +925,8 @@ function BlockingShotEditor({
             value={selectedItem.poseId ?? "stand"}
             onChange={(e) => {
               const preset = POSE_PRESET_BY_ID[e.target.value]
-              if (preset) updateCharacter(selectedItem.id, { poseId: preset.id, controls: preset.controls })
+              // 克隆 controls：预设对象为模块级共享单例，直接引用会被滑杆写回污染（T3 评审遗留）
+              if (preset) updateCharacter(selectedItem.id, { poseId: preset.id, controls: { ...preset.controls } })
             }}
             className="h-7 flex-1 rounded border bg-background px-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
@@ -874,46 +937,80 @@ function BlockingShotEditor({
             ))}
           </select>
         </div>
-        <div className="mt-2 flex flex-col gap-1.5">
-          {POSE_GROUPS.map((group) => (
-            <div key={group.id}>
-              <p className="mb-0.5 text-[10px] font-medium text-muted-foreground/80">{group.label}</p>
-              {group.sliders.map((def) => {
-                const isOffsetY = def.key === "body.offsetY"
-                const v = selectedItem.controls?.[def.key] ?? 0
-                return (
-                  <label key={def.key} className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <span className="w-8 shrink-0">{def.label}</span>
-                    <input
-                      type="range"
-                      min={def.min}
-                      max={def.max}
-                      step={isOffsetY ? 0.01 : 1}
-                      value={v}
-                      onChange={(e) => {
-                        const next = { ...selectedItem.controls }
-                        next[def.key] = Number(e.target.value)
-                        updateCharacter(selectedItem.id, { controls: next })
-                      }}
-                      className="flex-1 accent-primary"
-                    />
-                    <span className="w-14 text-right tabular-nums">
-                      {v}
-                      {isOffsetY ? " 米" : "°"}
+        <div className="mt-2 flex flex-col gap-1">
+          {POSE_GROUPS.map((group) => {
+            const changed = group.sliders.filter((def) => (selectedItem.controls?.[def.key] ?? 0) !== 0).length
+            // 转角滑杆按当前体型限位收窄（±58/72/90）；body.offsetY 为长度（米），不适用
+            const limit = poseLimitFor(selectedItem.bodyType)
+            return (
+              <details key={group.id} className="group rounded border border-border/50 px-1.5 py-1">
+                <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] text-muted-foreground [&::-webkit-details-marker]:hidden">
+                  <ChevronRightIcon className="size-3 transition-transform group-open:rotate-90" />
+                  {group.label}
+                  {changed > 0 && (
+                    <span className="ml-auto rounded-full bg-primary/10 px-1.5 text-[10px] tabular-nums text-primary">
+                      {changed}
                     </span>
-                  </label>
-                )
-              })}
-            </div>
-          ))}
+                  )}
+                </summary>
+                <div className="mt-1.5 flex flex-col gap-1.5 pb-0.5">
+                  {group.sliders.map((def) => {
+                    const isOffsetY = def.key === "body.offsetY"
+                    const value = selectedItem.controls?.[def.key] ?? 0
+                    const min = isOffsetY ? def.min : -limit
+                    const max = isOffsetY ? def.max : limit
+                    const outOfRange = value < min || value > max
+                    return (
+                      <label key={def.key} className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <span className="w-8 shrink-0">{def.label}</span>
+                        <input
+                          type="range"
+                          min={min}
+                          max={max}
+                          step={isOffsetY ? 0.01 : 1}
+                          value={value}
+                          aria-label={`${group.label} · ${def.label}`}
+                          onChange={(e) => {
+                            // 单值键写回（其余键保留）；用户写入值天然落在滑杆范围内
+                            const next = { ...selectedItem.controls, [def.key]: Number(e.target.value) }
+                            updateCharacter(selectedItem.id, { controls: next })
+                          }}
+                          className="flex-1 accent-primary"
+                        />
+                        <span
+                          className={cn("w-14 text-right tabular-nums", outOfRange && "text-amber-500")}
+                          title={
+                            outOfRange
+                              ? isOffsetY
+                                ? `原值 ${value} 米，超出滑杆范围 ${min}~${max} 米`
+                                : `预设原值 ${value}°，超出当前体型限位 ±${limit}°（拖动滑杆即按限位取值）`
+                              : undefined
+                          }
+                        >
+                          {value}
+                          {isOffsetY ? " 米" : "°"}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </details>
+            )
+          })}
         </div>
       </div>
     ) : null
 
+  /** 右栏机位面板：机位NN 与左列表/视口标签同源；rig 选中时整块高亮（spec §4.2 选中态可见） */
   const cameraEl = (
-    <div className="rounded-md border border-border/60 p-2">
+    <div
+      className={cn(
+        "rounded-md border p-2 transition-colors",
+        rigSelected ? "border-primary/60 bg-primary/5 ring-1 ring-primary/30" : "border-border/60",
+      )}
+    >
       <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-        <CameraIcon className="size-3" /> 机位参数（视锥随目标实时变化）
+        <CameraIcon className="size-3" /> 机位参数 · {rigLabel(shotIndex)}（视锥随目标实时变化）
       </p>
       <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-7">
         {(["position", "target"] as const).map((axis) =>
@@ -995,21 +1092,31 @@ function BlockingShotEditor({
       </div>
     )
 
+  /** 左栏机位列表：点击 = 切换该分镜 + 选中其机位 rig（spec §4.2）；rig 选中行高亮（spec §4.3 命名） */
   const shotSelectorEl = shotsCount > 1 && (
     <div className="flex flex-wrap gap-1.5">
       {Array.from({ length: shotsCount }, (_, i) => (
         <button
           key={i}
           type="button"
-          onClick={() => onShotIndexChange(i)}
+          title={
+            variant !== "fullscreen"
+              ? "切换镜头"
+              : rigSelected && i === shotIndex
+                ? "已选中该机位（可在视口中拖动）"
+                : "切换并选中该机位"
+          }
+          onClick={() => selectCameraRow(i)}
           className={cn(
             "rounded-md border px-2 py-1 text-xs transition-colors",
-            i === shotIndex
-              ? "border-primary/60 bg-primary/10 font-medium"
-              : "border-border/60 text-muted-foreground hover:border-primary/30",
+            i === shotIndex && rigSelected
+              ? "border-primary bg-primary/15 font-medium ring-1 ring-primary/40"
+              : i === shotIndex
+                ? "border-primary/60 bg-primary/10 font-medium"
+                : "border-border/60 text-muted-foreground hover:border-primary/30",
           )}
         >
-          镜头 {i + 1}
+          {rigLabel(i)}
         </button>
       ))}
     </div>
@@ -1048,12 +1155,14 @@ function BlockingShotEditor({
                     shots={shots}
                     shotIndex={shotIndex}
                     viewMode={viewMode}
-                    transformMode={transformMode}
+                    transformMode={effectiveTransformMode}
                     showLabels={showLabels}
                     selectedId={selected}
-                    onSelect={setSelected}
-                    onSelectShot={onShotIndexChange}
+                    onSelect={handleSelect}
+                    onSelectShot={handleSelectShot}
                     onTransform={handleTransform}
+                    onMoveRig={handleMoveRig}
+                    selectedShotId={rigSelected ? `__cam_${shotIndex}` : null}
                   />
                   {/* 弹层打开时：点画布空白处关闭（高于 FrameOverlay、低于 pill） */}
                   {viewMode === "director" && openMenu != null && (
@@ -1071,22 +1180,29 @@ function BlockingShotEditor({
                       <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center">
                         <div className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-border/60 bg-background/80 px-1.5 py-1 shadow-lg backdrop-blur-md">
                           <ModeButton
-                            active={transformMode === "translate"}
+                            active={effectiveTransformMode === "translate"}
                             icon={<Move3dIcon className="size-4" />}
                             label="移动"
                             onClick={() => setTransformMode("translate")}
                           />
                           <ModeButton
-                            active={transformMode === "rotate"}
+                            active={effectiveTransformMode === "rotate"}
                             icon={<Rotate3dIcon className="size-4" />}
                             label="旋转"
                             onClick={() => setTransformMode("rotate")}
                           />
                           <ModeButton
-                            active={transformMode === "scale"}
+                            active={effectiveTransformMode === "scale"}
                             icon={<Scale3dIcon className="size-4" />}
                             label="缩放"
-                            onClick={() => setTransformMode("scale")}
+                            onClick={() => {
+                              // 机位不支持缩放（spec §4.2）：toast 且模式不切（视口侧同样不进入 scale）
+                              if (rigSelected) {
+                                toast.add({ title: "机位不支持缩放", type: "warning" })
+                                return
+                              }
+                              setTransformMode("scale")
+                            }}
                           />
                           <span className="mx-0.5 h-4 w-px bg-border" />
                           <ModeButton
@@ -1242,10 +1358,30 @@ export function PrevisBlockingEditor({
   variant?: "inline" | "fullscreen"
 }) {
   const artifact = stage.artifact
+  // 先算安全值再挂 hook（hook 不可置于提前 return 之后）
+  const shots = isPrevisArtifact(artifact) ? artifact.shots : []
+  const index = Math.min(Math.max(shotIndex, 0), Math.max(0, shots.length - 1))
+  /** 机位 rig 选中（父级唯一真源）：编辑器按 shot 重建（key=index），选中态须跨重建存活。
+   *  记录 {项目, 阶段, 分镜} 而非裸索引——切项目/阶段自动失效，且切走该分镜时
+   *  rigSelected 即为 false（纯派生判定，无 effect 同步；回到该分镜会恢复该机位选中）。
+   *  视口 selectedShotId 由此派生（`__cam_{i}`）；图元/空点/左栏图元点击经
+   *  onRigSelect(null) 清除，不得重新断言过期 rig。 */
+  const [rigSelection, setRigSelection] = React.useState<{
+    projectId: string
+    stageId: string
+    index: number
+  } | null>(null)
+  const rigSelectedIndex =
+    rigSelection &&
+    rigSelection.projectId === projectId &&
+    rigSelection.stageId === stage.id &&
+    rigSelection.index === index
+      ? rigSelection.index
+      : null
+  const selectRig = (i: number | null) =>
+    setRigSelection(i == null ? null : { projectId, stageId: stage.id, index: i })
   if (!isPrevisArtifact(artifact)) return null
-  const shots = artifact.shots
   if (shots.length === 0) return null
-  const index = Math.min(Math.max(shotIndex, 0), shots.length - 1)
   const shot = shots[index]
 
   const editor = (
@@ -1260,6 +1396,8 @@ export function PrevisBlockingEditor({
       onShotIndexChange={onShotIndexChange}
       onDone={onDone}
       variant={variant}
+      rigSelected={rigSelectedIndex === index}
+      onRigSelect={selectRig}
     />
   )
   return variant === "inline" ? (
