@@ -16,8 +16,9 @@
  * 调用方（viewport）负责 item.position/rotation/scale 与 itemId 标注；本模块只保证
  * 「最低点（站立时即脚底）在返回对象本地 y=0」——UE4 与程序化两路一致（v2 语义）。
  *
- * 释放契约：`dispose()` 只释放本实例独占的资源——UE4 路径为克隆材质（几何/源材质是
- * 与 GLB 缓存共享的资源，绝不释放）；程序化路径为本实例新建的全部几何/材质。
+ * 释放契约：`dispose()` 只释放本实例独占的资源——UE4 路径为克隆材质 + 每个 SkinnedMesh
+ * 的 Skeleton（含骨骼纹理；几何/源材质/源骨骼是与 GLB 缓存共享的资源，绝不释放）；
+ * 程序化路径为本实例新建的全部几何/材质。
  */
 
 import * as THREE from "three"
@@ -37,8 +38,8 @@ import type { BlockingItem } from "@/lib/types"
 /** UE4 素体资产（public/models/；随静态导出与 Electron 打包分发） */
 const UE4_MODEL_URL = "/models/ue-mannequin-retopology.glb"
 
-/** 角色默认染色（= viewport ITEM_COLOR.character；UE4 与程序化两路共用） */
-export const CHARACTER_DEFAULT_TINT = 0x6366f1
+/** 角色默认染色（spec §2.1/§6 默认色 #4F8EF7；= viewport ITEM_COLOR.character，两路共用） */
+export const CHARACTER_DEFAULT_TINT = 0x4f8ef7
 
 /** 深色细节（接缝环/五官/手/脚末端）材质色（自 viewport 随程序化构建器迁入） */
 const DETAIL_COLOR = 0x070a0f
@@ -144,9 +145,17 @@ export function isolateAndTintUE4MannequinMaterials(scene: THREE.Object3D, tint:
   })
 }
 
-/** 释放本实例克隆的材质（仅释放 storyAiIsolatedMaterial 标记的克隆体；共享几何/源材质不动） */
-function disposeIsolatedMaterials(root: THREE.Object3D) {
+/**
+ * 释放本实例独占的资源：克隆材质（仅 storyAiIsolatedMaterial 标记的克隆体）
+ * + 每个 SkinnedMesh 的 Skeleton。SkeletonUtils.clone 逐克隆新建 Skeleton
+ * （skeleton.clone()，boneTexture 首次渲染时分配）→ 逐 SkinnedMesh 释放骨骼纹理；
+ * 共享几何/源材质/源骨骼不动。
+ */
+function disposeIsolatedResources(root: THREE.Object3D) {
   root.traverse((object) => {
+    const skinned = object as THREE.SkinnedMesh
+    if (skinned.isSkinnedMesh) skinned.skeleton?.dispose()
+
     if (!object.userData.storyAiIsolatedMaterial) return
     const material = (object as THREE.Mesh).material
     if (Array.isArray(material)) material.forEach((item) => item.dispose())
@@ -199,7 +208,7 @@ export function createCharacterModel(
 function buildUe4Mannequin(item: BlockingItem, source: THREE.Object3D): CharacterModelHandle {
   const bodyType = normalizeBodyType(item.bodyType)
   const clone = cloneSkeleton(source) as THREE.Group
-  const dispose = () => disposeIsolatedMaterials(clone)
+  const dispose = () => disposeIsolatedResources(clone)
 
   const object = new THREE.Group()
   const scaleGroup = new THREE.Group()

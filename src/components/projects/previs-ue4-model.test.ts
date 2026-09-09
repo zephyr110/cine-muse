@@ -5,8 +5,10 @@
  * 1) 程序化回退路径（UE4 未就绪/实例化异常）——v3 词表 → 关节组旋转映射、体型限位、
  *    body.offsetY + 贴地、dispose 释放本实例几何/材质；
  * 2) UE4 路径（真实资产 parseAsync 注入）——SkeletonUtils 克隆 + 材质隔离染色（源材质不被改写）
- *    + 整模缩放组 + 贴地 + dispose 只释放克隆材质（共享几何/源材质不动）；
- * 3) 胸 logo 材质豁免（REF UE4MannequinModel.tsx:41-53 判定）。
+ *    + 整模缩放组 + rig 驱动落到克隆骨骼（预设 vs 中性克隆，源骨架不被改写）+ 贴地
+ *    + dispose 只释放克隆材质与克隆 Skeleton（共享几何/源材质/源骨骼不动）；
+ * 3) 胸 logo 材质豁免（REF UE4MannequinModel.tsx:41-53 判定）；
+ * 4) ensureUe4Model 失败语义——rejection 缓存（不重试）、无 unhandledrejection、调用方回退程序化。
  */
 
 import { readFileSync } from "node:fs"
@@ -15,6 +17,7 @@ import { describe, expect, it, vi } from "vitest"
 import * as THREE from "three"
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js"
 
+import { POSE_PRESET_BY_ID } from "@/lib/engine/previs-poses"
 import type { BlockingItem } from "@/lib/types"
 import {
   CHARACTER_DEFAULT_TINT,
@@ -252,7 +255,7 @@ describe("createCharacterModel：程序化回退路径（v3 词表驱动）", ()
 })
 
 describe("createCharacterModel：UE4 路径（真实资产注入）", () => {
-  it("克隆 + 材质隔离染色 + 整模缩放组 + 贴地；源材质/几何不被改写", async () => {
+  it("克隆 + 材质隔离染色 + 整模缩放组 + rig 落到克隆骨骼 + 贴地；源材质/几何/骨骼不被改写", async () => {
     const gltf = await new GLTFLoader().parseAsync(stripGltfTextures(readFileSync(GLB_PATH)), "")
 
     let sourceMesh: THREE.SkinnedMesh | null = null
@@ -263,10 +266,25 @@ describe("createCharacterModel：UE4 路径（真实资产注入）", () => {
     const sourceMaterial = (sourceMesh as unknown as THREE.SkinnedMesh).material as THREE.MeshStandardMaterial
     const sourceColorBefore = sourceMaterial.color.getHex()
 
+    // 源骨骼快照（实例化前）：rig 只作用于克隆，共享骨架绝不被改写
+    const boneNames = ["Bip001_Spine1_05", "Bip001_L_Thigh_057", "Bip001_L_Calf_058"]
+    const sourceBonesBefore = boneNames.map((name) => {
+      const bone = byName(gltf.scene, name)
+      return {
+        name,
+        position: bone.position.clone(),
+        quaternion: bone.quaternion.clone(),
+        scale: bone.scale.clone(),
+      }
+    })
+
+    // 预设 sit（非中性：髋 pitch 80 / 膝 bend 90，chibi 限位钳到 58）——
+    // 若 applyUE4Rig 收到 {}（controls 未转发），下面与中性克隆的骨骼差将恒为 0
     const { object, dispose } = createCharacterModel(
-      makeItem({ bodyType: "chibi", color: "#ff0000" }),
+      makeItem({ bodyType: "chibi", color: "#ff0000", controls: { ...POSE_PRESET_BY_ID.sit.controls } }),
       { ue4Scene: gltf.scene },
     )
+    const neutral = createCharacterModel(makeItem({ bodyType: "chibi" }), { ue4Scene: gltf.scene })
 
     // 整模缩放组（getUE4ModelScale：chibi 0.56）
     const scaleGroup = object.children[0]
@@ -286,19 +304,38 @@ describe("createCharacterModel：UE4 路径（真实资产注入）", () => {
     expect(cloneMaterial.metalness).toBeCloseTo(0.04, 6)
     expect(sourceMaterial.color.getHex()).toBe(sourceColorBefore)
 
+    // rig 转发：预设姿势落在克隆骨骼上（大腿/小腿四元数 vs 中性克隆，≈58° = 1.01 rad）
+    for (const name of ["Bip001_L_Thigh_057", "Bip001_L_Calf_058"]) {
+      const posedBone = byName(object, name)
+      const neutralBone = byName(neutral.object, name)
+      expect(posedBone.quaternion.angleTo(neutralBone.quaternion), name).toBeGreaterThan(0.5)
+    }
+
+    // 源骨架未被实例化/驱动改写
+    for (const before of sourceBonesBefore) {
+      const bone = byName(gltf.scene, before.name)
+      expect(bone.quaternion.equals(before.quaternion), before.name).toBe(true)
+      expect(bone.position.equals(before.position), before.name).toBe(true)
+      expect(bone.scale.equals(before.scale), before.name).toBe(true)
+    }
+
     // 贴地（rest 包围盒最低点 = 对象本地 y=0）
     expect(minY(object)).toBeGreaterThan(-0.01)
     expect(minY(object)).toBeLessThan(0.01)
 
-    // dispose：克隆材质释放；共享几何与源材质不动
+    // dispose：克隆材质 + 克隆 Skeleton（骨骼纹理）释放；共享几何/源材质/源骨骼不动
     const cloneMatSpy = vi.spyOn(cloneMaterial, "dispose")
     const sourceMatSpy = vi.spyOn(sourceMaterial, "dispose")
     const cloneGeoSpy = vi.spyOn((cloneMesh as unknown as THREE.SkinnedMesh).geometry, "dispose")
+    const cloneSkeletonSpy = vi.spyOn((cloneMesh as unknown as THREE.SkinnedMesh).skeleton, "dispose")
+    const sourceSkeletonSpy = vi.spyOn((sourceMesh as unknown as THREE.SkinnedMesh).skeleton, "dispose")
 
     dispose()
 
     expect(cloneMatSpy).toHaveBeenCalled()
+    expect(cloneSkeletonSpy).toHaveBeenCalled()
     expect(sourceMatSpy).not.toHaveBeenCalled()
+    expect(sourceSkeletonSpy).not.toHaveBeenCalled()
     expect(cloneGeoSpy).not.toHaveBeenCalled()
   })
 
@@ -330,6 +367,48 @@ describe("createCharacterModel：UE4 路径（真实资产注入）", () => {
     expect(firstMatSpy).toHaveBeenCalled()
     expect(secondMatSpy).not.toHaveBeenCalled()
     expect(secondMat.color.getHex()).toBe(0x00ff00)
+  })
+})
+
+describe("ensureUe4Model：加载失败语义（缓存 rejection，不重试）", () => {
+  it("失败 → 同一 rejected promise；loader 只调用一次；无未处理拒绝；调用方回退程序化", async () => {
+    // 独立模块实例（避免模块级 ue4Ready 缓存污染其他用例）+ 注入失败 loader
+    vi.resetModules()
+    const load = vi.fn((_url: string, _onLoad: unknown, _onProgress: unknown, onError: (err: Error) => void) => {
+      onError(new Error("GLB 加载失败"))
+    })
+    vi.doMock("three/addons/loaders/GLTFLoader.js", () => ({ GLTFLoader: class { load = load } }))
+
+    let unhandled: unknown = null
+    const onUnhandled = (reason: unknown) => {
+      unhandled = reason
+    }
+    process.on("unhandledRejection", onUnhandled)
+
+    try {
+      const mod = await import("./previs-ue4-model")
+
+      // 调用方漏 catch（fire-and-forget）：模块内空 catch 兜底 → 不得逃逸 unhandledRejection
+      void mod.ensureUe4Model()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(unhandled).toBeNull()
+
+      // 幂等缓存：第二次拿到同一个已 reject 的 promise（不重试、不重新加载）
+      const first = mod.ensureUe4Model()
+      const second = mod.ensureUe4Model()
+      expect(second).toBe(first)
+      await expect(first).rejects.toThrow("GLB 加载失败")
+      expect(load).toHaveBeenCalledTimes(1)
+      expect(mod.isUe4ModelReady()).toBe(false)
+
+      // 调用方（未注入 ue4Scene）拿不到源场景 → 回退程序化，不抛出
+      const { object } = mod.createCharacterModel(makeItem())
+      expect(() => byName(object, "procedural-ground")).not.toThrow()
+    } finally {
+      process.off("unhandledRejection", onUnhandled)
+      vi.doUnmock("three/addons/loaders/GLTFLoader.js")
+      vi.resetModules()
+    }
   })
 })
 
@@ -379,8 +458,12 @@ describe("isolateAndTintUE4MannequinMaterials：染色与胸 logo 豁免", () =>
 
 describe("resolveCharacterTint", () => {
   it("item.color 优先，缺省 = CHARACTER_DEFAULT_TINT（同 viewport resolveItemColor 语义）", () => {
-    expect(resolveCharacterTint(makeItem({ color: "#4f8ef7" }))).toBe(0x4f8ef7)
+    expect(resolveCharacterTint(makeItem({ color: "#ff0000" }))).toBe(0xff0000)
     expect(resolveCharacterTint(makeItem())).toBe(CHARACTER_DEFAULT_TINT)
     expect(resolveCharacterTint(makeItem({ color: "#zzzzzz" }))).toBe(CHARACTER_DEFAULT_TINT)
+  })
+
+  it("默认色锁定 spec §2.1/§6：#4F8EF7（viewport ITEM_COLOR.character 引用该常量）", () => {
+    expect(CHARACTER_DEFAULT_TINT).toBe(0x4f8ef7)
   })
 })
