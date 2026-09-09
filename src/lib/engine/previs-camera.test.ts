@@ -43,9 +43,12 @@ describe("reframeCamera", () => {
   })
 
   it("forward 非单位向量 → 归一化后使用", () => {
-    const camera = { position: [0, 0, 0] as V3, target: [0, 0, 2] as V3 }
-    const out = reframeCamera(camera, [0, 0, 0], [0, 0, 10])
-    expect(out.target).toEqual([0, 0, 2])
+    // 视距 5、forward [0,3,0]：归一化后 [0,1,0]，target = pos + [0,1,0]×5 = [0,5,0]。
+    // 未归一化 → [0,15,0]；照抄输入 target → [0,0,5]，两者均被本用例排除。
+    const camera = { position: [0, 0, 0] as V3, target: [0, 0, 5] as V3 }
+    const out = reframeCamera(camera, [0, 0, 0], [0, 3, 0])
+    expect(out.target).toEqual([0, 5, 0])
+    expect(dist(out.position, out.target)).toBeCloseTo(5, 6)
   })
 
   it("退化输入：零长 forward 回退 +Z；零视距钳到 REF 下限 0.1", () => {

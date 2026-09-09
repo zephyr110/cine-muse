@@ -309,7 +309,8 @@ function buildCameraRig(): THREE.Group {
   const hitArea = cameraHitArea()
   const hit = new THREE.Mesh(
     new THREE.BoxGeometry(...hitArea.args),
-    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 }),
+    // depthWrite: false —— 否则隐形命中盒会在透明 pass 写深度，深度剔除镜头线/前框线/后盘 2
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
   )
   hit.position.set(...hitArea.position)
   g.add(hit)
@@ -1082,7 +1083,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         const cam = captureCam()
 
         /** 画幅 + 机位渲染：相机置入 shot（position/target/fov）、画幅 aspect；
-         *  并隐藏全部 hideFromViewportCapture 对象（地面/网格/机位 rig/gizmo helper/高亮层/CSS2D 层天然排除）。 */
+         *  并隐藏全部 hideFromViewportCapture 对象（地面/网格/机位 rig/gizmo helper/CSS2D 层天然排除）。 */
         const withCaptureView = <T,>(fn: () => T): T => {
           const prevPos = s.camera.position.clone()
           const prevTarget = s.controls.target.clone()
@@ -1094,7 +1095,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
           s.camera.fov = cam.fov
           s.camera.aspect = w / h
           s.camera.updateProjectionMatrix()
-          // 导出画面排除：hideFromViewportCapture=true 的全部对象（rig/网格/地面/gizmo/高亮/CSS2D 标签层）
+          // 导出画面排除：hideFromViewportCapture=true 的全部对象（rig/网格/地面/gizmo/CSS2D 标签层）
           const hidden: THREE.Object3D[] = []
           s.scene.traverse((o) => {
             if (o.userData.hideFromViewportCapture) {
