@@ -581,3 +581,51 @@ export const POSE_LIMIT_BY_BODY_TYPE: Record<Ue4BodyType, number> = {
   child: 72,
   chibi: 58,
 }
+
+/* ---------- v2 → v3 迁移映射表（spec §3.2/§3.3；迁移与测试共用单一来源） ---------- */
+
+/**
+ * v2 体型 id → v3（spec §3.2 全表，8 款 v2 旧 id）。
+ * 有损项（spec 明示）：tall→muscular（旧 2.05 无对应款，取最高壮款）、
+ * elder→mannequin（长者并入标准款）、hero→broad（英雄并入宽厚）。
+ * 迁移侧宽容策略：未命中本表的体型 id 原样保留（旧数据自定义 id 不丢）。
+ */
+export const BODY_TYPE_MIGRATION_V2: Record<string, Ue4BodyType> = {
+  standard: "mannequin",
+  heavy: "broad",
+  slim: "slim",
+  child: "child",
+  short: "teen",
+  tall: "muscular",
+  elder: "mannequin",
+  hero: "broad",
+}
+
+/**
+ * v2 姿势 id → v3（spec §3.3 全表，20 款 v2 旧 id）。
+ * 直连：stand/walk/run/sit/bow/wave/think/fight；近义：squat→crouch、kneel→kneel-two、point→reach；
+ * 参考无对应款（有损，spec 明示）：lie/jump/talk/greet/back/side/dance/hold/cheer → stand。
+ * 迁移侧：未命中（或缺失）的 poseId 一律置 "stand"（v3 默认空 controls 预设）。
+ */
+export const POSE_ID_MIGRATION_V2: Record<string, string> = {
+  stand: "stand",
+  walk: "walk",
+  run: "run",
+  sit: "sit",
+  bow: "bow",
+  wave: "wave",
+  think: "think",
+  fight: "fight",
+  squat: "crouch",
+  kneel: "kneel-two",
+  point: "reach",
+  lie: "stand",
+  jump: "stand",
+  talk: "stand",
+  greet: "stand",
+  back: "stand",
+  side: "stand",
+  dance: "stand",
+  hold: "stand",
+  cheer: "stand",
+}

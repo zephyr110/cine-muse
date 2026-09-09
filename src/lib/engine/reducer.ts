@@ -17,6 +17,7 @@ import { produce } from "immer"
 
 import { createSeedState, uid } from "@/lib/engine/seed"
 import { isPrevisArtifact } from "@/lib/engine/previs-types"
+import { BODY_TYPE_MIGRATION_V2, POSE_ID_MIGRATION_V2, POSE_PRESET_BY_ID } from "@/lib/engine/previs-poses"
 import { renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { MODE_LABEL } from "@/lib/types"
 import type {
@@ -29,8 +30,9 @@ import type {
   WorkflowStage,
 } from "@/lib/types"
 
-/** 数据形态版本：v2 = BlockingItem 全 3D 变换（rotation 欧拉 / scale 向量 / y 有效） */
-export const DATA_VERSION = 2
+/** 数据形态版本：v3 = 姿势词表换装（8 体型 id / 20 姿势预设 / controls 单值字典）。
+ * v2 = BlockingItem 全 3D 变换（rotation 欧拉 / scale 向量 / y 有效） */
+export const DATA_VERSION = 3
 
 export const STORAGE_KEY = "cine-muse-state-v2"
 export const LEGACY_STORAGE_KEY = "cine-muse-state-v1"
@@ -114,7 +116,42 @@ function migratePrevisUndoV2(u: AppState["previsUndo"]): AppState["previsUndo"] 
   return { past: conv(u.past), future: conv(u.future) }
 }
 
-/** 版本化迁移：v1 → v2 补字段默认值（references 等）并将 previs blocking 项升为全 3D 形状。
+/** v2 blocking 项 → v3：体型/姿势 id 按 spec §3.2/§3.3 表换装，controls 由目标新预设重派生。
+ * - 体型：命中 BODY_TYPE_MIGRATION_V2 才替换，未知名原样保留（宽容旧数据自定义 id）
+ * - 姿势：命中 POSE_ID_MIGRATION_V2 才替换，未知名（或缺失）置 "stand"（v3 默认预设）
+ * - controls：整体替换为 `{ ...新预设 controls }`（spec §3.4「微调归并」：v2 自定义微调
+ *   不保留，重派生新预设字典）；深拷贝——预设对象是全局共享单例，直接别名进状态会被
+ *   后续就地写回污染预设表。v2 旧预设相等性判定按 plan 可省（最终态一致）。 */
+function migrateBlockingItemV3(item: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...item }
+  const bodyType = next.bodyType
+  if (typeof bodyType === "string" && BODY_TYPE_MIGRATION_V2[bodyType]) {
+    next.bodyType = BODY_TYPE_MIGRATION_V2[bodyType]
+  }
+  const poseId = typeof next.poseId === "string" ? (POSE_ID_MIGRATION_V2[next.poseId] ?? "stand") : "stand"
+  next.poseId = poseId
+  next.controls = { ...(POSE_PRESET_BY_ID[poseId]?.controls ?? {}) }
+  return next
+}
+
+/** v2 撤销栈中的 blocking 快照 → v3（与产物同规则）：旧栈残留 v2 词表项会在撤销时污染 v3 镜头 */
+function migratePrevisUndoV3(u: AppState["previsUndo"]): AppState["previsUndo"] {
+  const conv = (snaps: PrevisUndoSnapshot[]) =>
+    snaps.map((sn) => ({
+      ...sn,
+      shots: sn.shots.map((sh) => ({
+        ...sh,
+        blocking: sh.blocking.map(
+          (b) => migrateBlockingItemV3(b as unknown as Record<string, unknown>) as unknown as BlockingItem,
+        ),
+      })),
+    }))
+  return { past: conv(u.past), future: conv(u.future) }
+}
+
+/** 版本化迁移：v1 → v2 补字段默认值（references 等）并将 previs blocking 项升为全 3D 形状；
+ * v2 → v3 换装 storyai 词表（体型/姿势 id 映射 + controls 由新预设重派生，见 migrateBlockingItemV3）。
+ * 逐级串联（v1 数据 v1→v2→v3），产物与 previsUndo 快照同规则。
  * 合并基准为 createInitialState()：旧数据缺顶层字段时回落到种子默认，已有字段原样保留。
  * 幂等 —— 当前版本（DATA_VERSION）数据再次经过本函数结果不变，可在任意持久化源上安全调用。 */
 export function migrateAppState(raw: unknown): AppState {
@@ -143,13 +180,31 @@ export function migrateAppState(raw: unknown): AppState {
       }),
     }))
   }
+  if (version < 3) {
+    projects = projects.map((p) => ({
+      ...p,
+      stages: (p.stages ?? []).map((st) => {
+        const a = st.artifact as { kind?: string; shots?: { blocking?: Record<string, unknown>[] }[] } | undefined
+        if (a?.kind === "previs" && Array.isArray(a.shots)) {
+          const artifact = { ...a, shots: a.shots.map((sh) => ({ ...sh, blocking: (sh.blocking ?? []).map(migrateBlockingItemV3) })) } as unknown as WorkflowStage["artifact"]
+          return { ...st, artifact }
+        }
+        return st
+      }),
+    }))
+  }
+  // v1/v2 栈内含旧形状 blocking 快照：撤销时会直接写回镜头 blocking，须与产物同规则逐级转换
+  // （v1 数据两段都跑：先 v1→v2 形状，再 v2→v3 词表）
+  const previsUndo =
+    s?.previsUndo && version < 3
+      ? migratePrevisUndoV3(version < 2 ? migratePrevisUndoV2(s.previsUndo) : s.previsUndo)
+      : s?.previsUndo
   return {
     ...createInitialState(),
     ...(s ?? {}),
     version: DATA_VERSION,
     projects,
-    // v1 栈内含 v1 形状 blocking 快照：撤销时会直接写回镜头 blocking，须与产物同规则转换
-    ...(version < 2 && s?.previsUndo ? { previsUndo: migratePrevisUndoV2(s.previsUndo) } : {}),
+    ...(previsUndo ? { previsUndo } : {}),
   } as AppState
 }
 
