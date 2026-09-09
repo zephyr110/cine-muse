@@ -6,8 +6,23 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 import { TransformControls } from "three/addons/controls/TransformControls.js"
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js"
 
-import { BODY_TYPE_BY_ID, POSE_PRESET_BY_ID, type JointName } from "@/lib/engine/previs-poses"
+import { toast } from "@/components/ui/toast"
 import type { BlockingItem, PrevisShot } from "@/lib/types"
+import { getRigQuaternion, reframeCamera } from "@/lib/engine/previs-camera"
+import {
+  CAM_LINE_COLOR,
+  CAM_LINE_OPACITY,
+  cameraBodyWireframeLines,
+  cameraFrustumLines,
+  cameraHitArea,
+  type WirePoint,
+} from "@/lib/engine/previs-rig-geometry"
+import {
+  CHARACTER_DEFAULT_TINT,
+  createCharacterModel,
+  ensureUe4Model,
+  isUe4ModelReady,
+} from "./previs-ue4-model"
 
 /** 导出图基准分辨率（按画幅比例派生宽高） */
 const MAP_BASE = 480
@@ -16,7 +31,7 @@ export type MapAspect = keyof typeof ASPECT_RATIOS
 
 const ITEM_COLOR: Record<BlockingItem["kind"], number> = {
   terrain: 0x9ca3af,
-  character: 0x6366f1,
+  character: CHARACTER_DEFAULT_TINT,
   prop: 0xf59e0b,
 }
 
@@ -31,9 +46,6 @@ export function resolveItemColor(item: BlockingItem): number {
   }
   return ITEM_COLOR[item.kind]
 }
-
-/** 深色细节（接缝环/五官/手/脚末端）材质色 */
-const DETAIL_COLOR = 0x070a0f
 
 /** 变换模式：translate / rotate / scale（TransformControls） */
 export type TransformMode = "translate" | "rotate" | "scale"
@@ -58,6 +70,8 @@ const CLICK_SLOP = 5
 const HOME_VIEW = { position: new THREE.Vector3(8, 8, 10), target: new THREE.Vector3(0, 1, 0), fov: 45 }
 /** 未接线 shots prop 时的稳定空数组（防每渲染新 [] 触发 effect） */
 const EMPTY_SHOTS: PrevisShot[] = []
+/** 机位标签锚点：rig 原点上方偏移（世界坐标；spec §4.3 保留 +0.55） */
+const RIG_LABEL_OFFSET_Y = 0.55
 
 /** 从命中对象向上找携带 userData.itemId 的祖先（rig/图元 均可） */
 function ownerId(obj: THREE.Object3D | null): string | null {
@@ -81,114 +95,7 @@ function ancestorShotIndex(obj: THREE.Object3D | null): number | null {
   return null
 }
 
-/** 程序化精细人偶：骨盆球 + 躯干双胶囊（腹/胸）+ 深色接缝环 + 头（眼鼻嘴）+ 四肢深色末端。
- *  组原点 = 脚底平面（y=0），高度沿 +y，默认面向 +Z；位置/旋转/缩放由 buildMesh 在父级应用。
- *  层级：根组 = 骨盆 + 双腿；torsoGroup（原点在髋高、随 torso 关节旋转）内 = 双胶囊躯干 +
- *  深色接缝环 + 头（眼鼻嘴）+ 双臂——躯干/头/臂随 torso 整体摆动，骨盆与双腿保持原位。 */
-function buildMannequin(item: BlockingItem): THREE.Group {
-  const g = new THREE.Group()
-  const body = BODY_TYPE_BY_ID[item.bodyType ?? "standard"]
-  const controls = item.controls ?? POSE_PRESET_BY_ID[item.poseId ?? "stand"]?.controls ?? {}
-  const h = body?.height ?? 1.8
-  const w = body?.width ?? 1
-  const headR = (body?.headSize ?? 0.34) * 0.5
-  const mat = new THREE.MeshStandardMaterial({ color: resolveItemColor(item), metalness: 0.04, roughness: 0.74 })
-  const dark = new THREE.MeshStandardMaterial({ color: DETAIL_COLOR, metalness: 0.1, roughness: 0.85 })
-
-  /** 四肢：holder 定位于关节枢轴（已在所属父组坐标中）并按 controls 旋转；
-   *  胶囊由枢轴下垂 len（下端 = 枢轴 − len）；末端深色手/脚球——
-   *  手球心略高于末端（拳沿臂端下方露 ~0.75rad），脚球心抬至球底恰触地（不穿地板）。 */
-  const limb = (
-    len: number, rad: number, pivot: [number, number, number],
-    joint: JointName, foot = false,
-  ): THREE.Group => {
-    const holder = new THREE.Group()
-    holder.position.set(...pivot)
-    const [rx, ry, rz] = controls[joint] ?? [0, 0, 0]
-    holder.rotation.set(rx * DEG, ry * DEG, rz * DEG)
-    const seg = new THREE.Mesh(new THREE.CapsuleGeometry(rad, Math.max(0.05, len - rad * 2), 4, 12), mat)
-    seg.position.y = -len / 2
-    holder.add(seg)
-    const tipR = rad * (foot ? 1.05 : 1.2)
-    const tip = new THREE.Mesh(new THREE.SphereGeometry(tipR, 10, 8), dark)
-    tip.position.y = -len + (foot ? tipR : rad * 0.45)
-    holder.add(tip)
-    return holder
-  }
-
-  const hipY = h * 0.52
-  const shoulderY = h * 0.8
-  const dT = shoulderY - hipY // 髋→肩 躯干高度段
-  const chestR = 0.3 * w
-  const hipR = 0.32 * w
-  const armLen = h * 0.33
-  const armRad = 0.09 * w
-  const legRad = 0.13 * w
-  const shoulderX = 0.33 * w
-
-  // —— 骨盆（根组）：髋位球 ——
-  const pelvis = new THREE.Mesh(new THREE.SphereGeometry(hipR, 16, 12), mat)
-  pelvis.position.y = hipY - 0.02 * h
-  g.add(pelvis)
-
-  // —— 躯干关节组（原点 = 髋高）——
-  const torsoGroup = new THREE.Group()
-  torsoGroup.position.y = hipY
-  const [tx, ty, tz] = controls.torso ?? [0, 0, 0]
-  torsoGroup.rotation.set(tx * DEG, ty * DEG, tz * DEG)
-  g.add(torsoGroup)
-
-  // 下腹胶囊（腰→下胸）与上胸胶囊（胸→肩；顶点收在头底之下，避免吞没头部）
-  const belly = new THREE.Mesh(new THREE.CapsuleGeometry(chestR * 0.92, Math.max(0.05, dT * 0.62), 4, 12), mat)
-  belly.position.y = dT * 0.31
-  torsoGroup.add(belly)
-  const chest = new THREE.Mesh(new THREE.CapsuleGeometry(chestR * 0.8, Math.max(0.05, dT * 0.34), 4, 12), mat)
-  chest.position.y = dT * 0.62
-  torsoGroup.add(chest)
-
-  // 深色接缝环：管 0.018w 微嵌体表、外露成细环——腰环贴腹段、颈环贴胸段上缘
-  const seam = (y: number, r: number) => {
-    const t = new THREE.Mesh(new THREE.TorusGeometry(r, 0.018 * w, 6, 20), dark)
-    t.rotation.x = Math.PI / 2
-    t.position.y = y
-    torsoGroup.add(t)
-  }
-  seam(dT * 0.55, chestR * 0.94) // 腰环（腹 0.92·chestR 截面外 +6mm）
-  seam(dT * 0.95, chestR * 0.76) // 颈环（胸 0.8·chestR 截面外 +5mm）
-
-  // —— 头（随躯干组）：球 + 深色五官（眼/鼻/嘴，+Z 面向）——
-  const headGroup = new THREE.Group()
-  headGroup.position.set(0, dT + headR * 1.15, 0) // 世界 y = shoulderY + 1.15·headR（头顶 ≈ h）
-  const [hx, hy, hz] = controls.head ?? [0, 0, 0]
-  headGroup.rotation.set(hx * DEG, hy * DEG, hz * DEG)
-  const skull = new THREE.Mesh(new THREE.SphereGeometry(headR, 18, 14), mat)
-  headGroup.add(skull)
-  const fz = headR * 0.86 // 眼 z（球心嵌入颅面，微凸）
-  const eyeY = headR * 0.16
-  const eyeX = headR * 0.34
-  const mk = (x: number, y: number, z: number, r: number) => {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6), dark)
-    m.position.set(x, y, z)
-    headGroup.add(m)
-  }
-  mk(-eyeX, eyeY, fz, headR * 0.16) // 眼
-  mk(eyeX, eyeY, fz, headR * 0.16) // 眼
-  mk(0, -eyeY * 0.3, headR * 0.95, headR * 0.1) // 鼻（凸出颅面）
-  mk(0, -eyeY * 1.5, headR * 0.98, headR * 0.14) // 嘴（凸出颅面）
-  torsoGroup.add(headGroup)
-
-  // —— 手臂（肩高挂点，随躯干组）——
-  torsoGroup.add(limb(armLen, armRad, [-shoulderX, dT, 0], "armL"))
-  torsoGroup.add(limb(armLen, armRad, [shoulderX, dT, 0], "armR"))
-
-  // —— 腿（髋高挂点，直挂根组——不随躯干转）——
-  g.add(limb(hipY, legRad, [-0.17 * w, hipY, 0], "legL", true))
-  g.add(limb(hipY, legRad, [0.17 * w, hipY, 0], "legR", true))
-
-  return g
-}
-
-/** 包围盒线框（选中高亮与边缘导出共用）：Group 取整体包围盒，Mesh 直接取几何边 */
+/** 包围盒线框（仅边缘图导出使用；选中高亮已移除，spec §4.1）：Group 取整体包围盒，Mesh 直接取几何边 */
 function buildBoundsEdges(obj: THREE.Object3D): THREE.LineSegments {
   const box = new THREE.Box3().setFromObject(obj)
   if (obj instanceof THREE.Group) {
@@ -207,22 +114,27 @@ function buildBoundsEdges(obj: THREE.Object3D): THREE.LineSegments {
   )
 }
 
-/** 图元 → 3D 网格：地形=薄板，角色=程序化精细人偶，道具=方体。
+/** 角色模型实例 → 专属资源释放函数（UE4 克隆材质等；见 previs-ue4-model 释放契约）。
+ *  WeakMap 而非 userData：释放函数不可序列化，且随对象回收自动清理。 */
+const modelDisposers = new WeakMap<THREE.Object3D, () => void>()
+
+/** 图元 → 3D 网格：地形=薄板，角色=UE4 素体（失败/未就绪回退程序化人偶），道具=方体。
  *  按 v2 变换直接落地：y 即数据真实高度（角色=脚底平面，prop/terrain=几何中心），无隐式抬升；
  *  角色/道具 castShadow（地面 receiveShadow，见初始化）；材质统一 meshStandardMaterial。 */
 function buildMesh(item: BlockingItem): THREE.Object3D {
   if (item.kind === "character") {
-    const g = buildMannequin(item)
-    g.userData.itemId = item.id
-    g.traverse((o) => {
+    const { object, dispose } = createCharacterModel(item)
+    modelDisposers.set(object, dispose)
+    object.userData.itemId = item.id
+    object.traverse((o) => {
       if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true
     })
     const [x, y, z] = item.position
-    g.position.set(x, y, z) // v2：y = 脚底高度
+    object.position.set(x, y, z) // v2：y = 脚底高度
     const [rx, ry, rz] = item.rotation
-    g.rotation.set(rx * DEG, ry * DEG, rz * DEG)
-    g.scale.set(item.scale[0], item.scale[1], item.scale[2])
-    return g
+    object.rotation.set(rx * DEG, ry * DEG, rz * DEG)
+    object.scale.set(item.scale[0], item.scale[1], item.scale[2])
+    return object
   }
   let geo: THREE.BufferGeometry
   if (item.kind === "terrain") {
@@ -243,53 +155,28 @@ function buildMesh(item: BlockingItem): THREE.Object3D {
   return mesh
 }
 
-/** 机位 rig：0.35 缩比线框摄像机（盒体 12 线 + 倒锥镜头 + 顶部双圆盘）+ 视锥 + 隐形命中盒。
- *  组原点 = 摄像机位置，rig 整体 lookAt(target) 后绕 Y 转 π —— 使镜头尖（局部 -Z）指向 target。 */
+/** 机位 rig：0.35 缩比线框摄像机（盒体 12 线 + 镜头倒锥 + 后部双圆盘 + 视锥远帧）+ 隐形命中盒。
+ *  组原点 = 摄像机位置；局部 +Z = 机位前方（指向 target，朝向由 getRigQuaternion 给出）——与 REF 同约定。 */
 function buildCameraRig(): THREE.Group {
   const g = new THREE.Group()
-  const line = (pts: [number, number, number][], color = 0xa9d8ff, opacity = 0.92) => {
+  const addLine = (pts: WirePoint[]) => {
     const geo = new THREE.BufferGeometry().setFromPoints(pts.map((p) => new THREE.Vector3(...p)))
-    const l = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity }))
+    const l = new THREE.Line(
+      geo,
+      new THREE.LineBasicMaterial({ color: CAM_LINE_COLOR, transparent: true, opacity: CAM_LINE_OPACITY }),
+    )
     g.add(l)
-    return l
   }
-  const s = 0.35 // 0.35 缩比
-  // 盒体 12 线（0.4×0.4×1 缩比）
-  const a = 0.2 * s
-  const b = 0.2 * s
-  const c = 0.5 * s
-  // 角点编号 = 二进制序（循环 sx 外层、sz 内层：sx>0 时 +4，sy>0 时 +2，sz>0 时 +1）；idx 每对相邻角点 = 一条棱
-  const corners: [number, number, number][] = []
-  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) corners.push([sx * a, sy * b, sz * c])
-  const idx = [[0, 1], [0, 2], [1, 3], [2, 3], [4, 5], [4, 6], [5, 7], [6, 7], [0, 4], [1, 5], [2, 6], [3, 7]]
-  for (const [i, j] of idx) line([corners[i], corners[j]])
-  // 倒锥镜头（指向 -Z 前方点）
-  const lensTip: [number, number, number] = [0, 0, -c - 0.09 * s]
-  for (const [x, y] of [[-a, -b], [a, -b], [a, b], [-a, b]]) line([[x, y, c], lensTip])
-  // 后部圆盘（两圈，顶部）
-  const disc = (yy: number) => {
-    const pts: [number, number, number][] = []
-    for (let i = 0; i <= 20; i++) {
-      const ang = (i / 20) * Math.PI * 2
-      pts.push([Math.cos(ang) * 0.16 * s, yy, -c + Math.sin(ang) * 0.16 * s])
-    }
-    line(pts)
-  }
-  disc(0.2 * s)
-  disc(0.2 * s + 0.05)
-  // 视锥 4 线：镜头尖 → 远帧 16:9 角点（宽 3.2*s 于 depth 1.82）
-  const depth = 1.82
-  const hw = (3.2 / 2) * s
-  const hh = hw / (16 / 9)
-  const frameCorners: [number, number, number][] = [
-    [-hw, hh, -c - depth], [hw, hh, -c - depth], [hw, -hh, -c - depth], [-hw, -hh, -c - depth],
-  ]
-  for (const fc of frameCorners) line([lensTip, fc])
-  // 隐形命中盒（padding；点击=选中该机位对应 shot）
+  for (const pts of cameraBodyWireframeLines()) addLine(pts)
+  for (const [a, b] of cameraFrustumLines()) addLine([a, b])
+  // 隐形命中盒（REF getViewportCameraHitArea 同值；点击 = 选中该机位对应 shot）
+  const hitArea = cameraHitArea()
   const hit = new THREE.Mesh(
-    new THREE.BoxGeometry(0.8 * s, 0.8 * s, 1.6 * s),
-    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 }),
+    new THREE.BoxGeometry(...hitArea.args),
+    // depthWrite: false —— 否则隐形命中盒会在透明 pass 写深度，深度剔除镜头线/前框线/后盘 2
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
   )
+  hit.position.set(...hitArea.position)
   g.add(hit)
   return g
 }
@@ -343,7 +230,7 @@ export interface PrevisViewportHandle {
  * - 布景项图元 + 地面网格 + OrbitControls 环绕（viewMode=director）
  * - TransformControls（translate/rotate/scale）+ 地面直拖；对象级别 onTransform 帧/终帧派发
  * - 每 shot 一个机位 rig（线框摄像机+视锥+隐形命中盒，点击 = onSelectShot）
- * - CSS2D 名字标签（角色头顶 / 机位N）；右上角轴向视图 gizmo（仅 director）
+ * - CSS2D 名字标签（角色头顶 / 机位NN）；右上角轴向视图 gizmo（仅 director）
  * - viewMode=camera：相机置入 shot 机位（position/target/fov），orbit 关闭；返回 director 恢复快照
  * - captureMaps()：按画幅真实渲染 布景/深度/边缘 三图（排除全部 hideFromViewportCapture 对象）
  */
@@ -363,6 +250,10 @@ export interface PrevisViewportProps {
   onSelectShot?: (index: number) => void
   /** 变换结果增量回写：commit=false 为拖拽帧、true 为终帧（editor 据此建撤销快照） */
   onTransform?: (id: string, patch: ItemPatch, commit: boolean) => void
+  /** 机位 rig 变换回写：commit=false 为拖拽帧、true 为终帧；fov 不变（editor 接线 T6；未传时 rig 仍视觉随动） */
+  onMoveRig?: (index: number, camera: PrevisShot["camera"], commit: boolean) => void
+  /** editor 驱动的 rig 选中（值 `__cam_{i}`）；未传时由视口点击自理（不占用 selectedId） */
+  selectedShotId?: string | null
 }
 
 export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewportProps>(
@@ -373,6 +264,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       viewMode = "director" as ViewMode,
       transformMode = "translate" as TransformMode,
       showLabels = true,
+      selectedShotId,
     } = props
     const hostRef = React.useRef<HTMLDivElement | null>(null)
     const stateRef = React.useRef<{
@@ -386,7 +278,6 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       rigLabels: Map<number, CSS2DObject>
       gizmo: TransformControls
       gizmoActive: boolean
-      hlGroup: THREE.Group
       raycaster: THREE.Raycaster
       viewAspect: number | null
       directorView: { pos: THREE.Vector3; target: THREE.Vector3; fov: number } | null
@@ -407,6 +298,8 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       shotIndex, viewMode, transformMode, showLabels,
       onSelectShot: props.onSelectShot,
       onTransform: props.onTransform,
+      onMoveRig: props.onMoveRig,
+      selectedShotId: props.selectedShotId,
     }
 
     /** 导出/环绕所用的机位：shots 接线后取 shots[shotIndex]，否则退化为旧 camera prop */
@@ -417,6 +310,39 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
     const emitTransform = (id: string, patch: ItemPatch, commit: boolean) => {
       propsRef.current.onTransform?.(id, patch, commit)
     }
+
+    // —— 机位 rig 选中（独立于 selectedId：editor 面板仍以 selectedId 为图元选中） ——
+    const [selectedRigIndex, setSelectedRigIndex] = React.useState<number | null>(null)
+    /** rig 最近一次 translate/rotate 模式（scale 对 rig 禁用时回退用） */
+    const rigModeRef = React.useRef<"translate" | "rotate">("translate")
+    /** 「机位不支持缩放」toast 去重键：同一 rig 选中周期只提示一次（防每帧 spam） */
+    const scaleToastKeyRef = React.useRef<string | null>(null)
+
+    // —— editor 驱动 rig 选中：selectedShotId = `__cam_{i}`（未传时不接管视口点击选中） ——
+    React.useEffect(() => {
+      if (selectedShotId === undefined) return
+      const m = selectedShotId ? /^__cam_(\d+)$/.exec(selectedShotId) : null
+      setSelectedRigIndex(m ? Number(m[1]) : null)
+    }, [selectedShotId])
+
+    // —— UE4 素体就绪代数：初始渲染一律程序化；ensureUe4Model 成功后 +1 → 触发一次 items 重建 ——
+    // 初始值读 isUe4ModelReady()：GLB 已缓存（如视口重挂载）时直接以 UE4 起步，避免二次重建。
+    const [ue4Epoch, setUe4Epoch] = React.useState(() => (isUe4ModelReady() ? 1 : 0))
+    React.useEffect(() => {
+      let alive = true
+      ensureUe4Model().then(
+        () => {
+          // e===0 才 +1（同值 bail out）——React 严格模式双跑也只重建一次
+          if (alive) setUe4Epoch((e) => (e === 0 ? 1 : e))
+        },
+        () => {
+          // GLB 加载失败：永久保持程序化回退（不重试、不抛出）
+        },
+      )
+      return () => {
+        alive = false
+      }
+    }, [])
 
     // —— 初始化场景与交互层（一次） ——
     React.useEffect(() => {
@@ -471,11 +397,6 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       controls.target.copy(HOME_VIEW.target)
       controls.enableDamping = true
 
-      // 选中高亮图层（独立于导出）
-      const hlGroup = new THREE.Group()
-      hlGroup.userData.hideFromViewportCapture = true
-      scene.add(hlGroup)
-
       // 机位 rig 层：每 shot 一个（director 模式可见，导出排除）
       const rigGroup = new THREE.Group()
       rigGroup.userData.hideFromViewportCapture = true
@@ -529,7 +450,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         itemMeshes: new Map<string, THREE.Object3D>(),
         rigGroup, labelLayer, rigLabels: new Map<number, CSS2DObject>(),
         gizmo, gizmoActive: false,
-        hlGroup, raycaster: new THREE.Raycaster(),
+        raycaster: new THREE.Raycaster(),
         viewAspect: null as number | null,
         directorView: null as { pos: THREE.Vector3; target: THREE.Vector3; fov: number } | null,
         inCameraView: false,
@@ -589,13 +510,40 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
-    /** gizmo 变换 → 帧/终帧派发（读 gizmo.object 的当前位姿；rotate=度） */
+    /** gizmo 变换 → 帧/终帧派发（读 gizmo.object 的当前位姿；rotate=度）。
+     *  rig：按 REF commitCameraTransformFromViewport 语义重算 target（视距保持）后经 onMoveRig 派发。 */
     function applyGizmoFrame(commit: boolean) {
       const s = stateRef.current
       const obj = s?.gizmo.object
       if (!s || !obj) return
       const id = ownerId(obj)
-      if (!id || id === "__ground__" || id === "__camera__") return
+      if (id === "__camera__") {
+        const index = obj.userData.shotIndex as number | undefined
+        const shot = index != null ? propsRef.current.shots[index] : undefined
+        if (index == null || !shot) return
+        // 局部 +Z = 机位前方（getRigQuaternion 约定）；rotate 时 target 沿新 forward 等距重算
+        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(obj.quaternion).normalize()
+        const next = reframeCamera(
+          shot.camera,
+          [obj.position.x, obj.position.y, obj.position.z],
+          [forward.x, forward.y, forward.z],
+        )
+        const round2 = (v: number) => Math.round(v * 100) / 100
+        // 标签跟随 rig（世界坐标锚定；无 editor 接线时 rig 仍整体视觉随动）
+        const label = s.rigLabels.get(index)
+        if (label) label.position.set(obj.position.x, obj.position.y + RIG_LABEL_OFFSET_Y, obj.position.z)
+        propsRef.current.onMoveRig?.(
+          index,
+          {
+            position: [round2(next.position[0]), round2(next.position[1]), round2(next.position[2])],
+            target: [round2(next.target[0]), round2(next.target[1]), round2(next.target[2])],
+            fov: shot.camera.fov, // fov 不变（rig 拖动不改变镜头焦距）
+          },
+          commit,
+        )
+        return
+      }
+      if (!id || id === "__ground__") return
       const round2 = (v: number) => Math.round(v * 100) / 100
       emitTransform(id, {
         position: [round2(obj.position.x), round2(obj.position.y), round2(obj.position.z)],
@@ -616,12 +564,19 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       }
     }
 
-    /** 递归释放几何与材质（重建/移除时防 GPU 缓冲泄漏）；CSS2D 子标签连带清 DOM */
+    /** 递归释放几何与材质（重建/移除时防 GPU 缓冲泄漏）；CSS2D 子标签连带清 DOM。
+     *  角色模型走 createCharacterModel 的专属释放（UE4 几何/源材质为共享资源，不可在此释放）。 */
     function disposeObject(obj: THREE.Object3D) {
       const s = stateRef.current
       if (s?.gizmo.object === obj) s.gizmo.detach()
+      obj.traverse(removeCSS2DLabel)
+      const modelDispose = modelDisposers.get(obj)
+      if (modelDispose) {
+        modelDisposers.delete(obj)
+        modelDispose()
+        return
+      }
       obj.traverse((o) => {
-        removeCSS2DLabel(o)
         const m = o as THREE.Mesh
         if (m.geometry) m.geometry.dispose()
         const mat = m.material as THREE.Material | THREE.Material[] | undefined
@@ -637,10 +592,10 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       const keep = new Set<string>()
       for (const item of propsRef.current.items) {
         keep.add(item.id)
-        // 姿态签名：体型/姿势/关节角度/颜色任一变化 → 重建人偶
+        // 姿态签名：渲染路径代数（程序化→UE4）/体型/姿势/关节角度/颜色任一变化 → 重建人偶
         const rigKey =
           item.kind === "character"
-            ? `${item.bodyType ?? ""}|${item.poseId ?? ""}|${JSON.stringify(item.controls ?? {})}|${item.color ?? ""}`
+            ? `${ue4Epoch}|${item.bodyType ?? ""}|${item.poseId ?? ""}|${JSON.stringify(item.controls ?? {})}|${item.color ?? ""}`
             : ""
         let mesh = st.itemMeshes.get(item.id)
         if (!mesh) {
@@ -669,7 +624,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         }
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [items, selectedId])
+    }, [items, selectedId, ue4Epoch])
 
     // —— CSS2D 角色名字标签（头顶 Box3 top + 0.15；跟随图元拖拽/缩放实时重挂） ——
     React.useEffect(() => {
@@ -711,29 +666,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         label.position.y = labelLocalY(mesh)
         label.visible = true
       }
-    }, [items, showLabels])
-
-    // —— 选中高亮：独立图层（不进导出画面） ——
-    React.useEffect(() => {
-      const st = stateRef.current
-      if (!st) return
-      // 释放旧高亮几何/材质（拖拽中每帧重建，避免 GPU 缓冲累积）
-      st.hlGroup.traverse((o) => {
-        if (o === st.hlGroup) return
-        const m = o as THREE.Mesh
-        m.geometry?.dispose()
-        ;(m.material as THREE.Material | undefined)?.dispose()
-      })
-      st.hlGroup.clear()
-      const mesh = selectedId ? st.itemMeshes.get(selectedId) : null
-      if (mesh) {
-        const hl = buildBoundsEdges(mesh)
-        hl.position.copy(mesh.position)
-        hl.rotation.copy(mesh.rotation)
-        hl.scale.copy(mesh.scale)
-        st.hlGroup.add(hl)
-      }
-    }, [items, selectedId])
+    }, [items, showLabels, ue4Epoch])
 
     // —— 机位 rig 同步（每 shot 一个 rig + 机位N 标签；rig 可见性随 viewMode） ——
     React.useEffect(() => {
@@ -757,19 +690,18 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
           st.rigGroup.add(rig)
         }
         rig.position.set(...shot.camera.position)
-        rig.lookAt(new THREE.Vector3(...shot.camera.target))
-        // 组 lookAt 使局部 +Z 指向 target；镜头位于局部 -Z —— 转 180° 让镜头对准 target
-        rig.rotateY(Math.PI)
+        // 局部 +Z 指向 target（REF getViewportCameraQuaternion 同约定；镜头/视锥均朝 +Z）
+        rig.quaternion.copy(getRigQuaternion(shot.camera.position, shot.camera.target))
         rig.userData.shotIndex = i
         rig.userData.itemId = "__camera__"
-        // 机位N 标签（世界坐标锚定在 rig 正上方；CSS2D 独立 DOM 层）
+        // 机位NN 标签（两位补零；世界坐标锚定在 rig 正上方 +0.55；CSS2D 独立 DOM 层）
         let label = st.rigLabels.get(i)
         if (!label) {
-          label = new CSS2DObject(makeLabelEl(`机位${i + 1}`))
+          label = new CSS2DObject(makeLabelEl(`机位${String(i + 1).padStart(2, "0")}`))
           st.labelLayer.add(label)
           st.rigLabels.set(i, label)
         }
-        label.position.set(rig.position.x, rig.position.y + 0.55, rig.position.z)
+        label.position.set(rig.position.x, rig.position.y + RIG_LABEL_OFFSET_Y, rig.position.z)
         label.visible = director && propsRef.current.showLabels === true
       })
       for (const [i, label] of [...st.rigLabels]) {
@@ -826,18 +758,37 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       }
     }, [viewMode, shotIndex, shots])
 
-    // —— gizmo 附着与模式同步（items 重建网格后重挂） ——
+    // —— gizmo 附着与模式同步（图元 mesh 或机位 rig 组；items/rig 重建后重挂） ——
     React.useEffect(() => {
       const st = stateRef.current
       if (!st) return
-      const mesh = selectedId ? st.itemMeshes.get(selectedId) : null
-      if (mesh && mesh.userData.itemId && mesh.userData.itemId !== "__ground__") {
-        if (st.gizmo.object !== mesh) st.gizmo.attach(mesh)
+      const mode = propsRef.current.transformMode ?? "translate"
+      // rig 仅导演态可选/可挂（camera 视角下 rig 隐藏，不残留 gizmo）
+      const rig =
+        propsRef.current.viewMode === "director" && selectedRigIndex != null
+          ? (st.rigGroup.children[selectedRigIndex] as THREE.Group | undefined) ?? null
+          : null
+      const mesh = !rig && selectedId ? st.itemMeshes.get(selectedId) : null
+      const target = rig ?? (mesh && mesh.userData.itemId && mesh.userData.itemId !== "__ground__" ? mesh : null)
+      if (target) {
+        if (st.gizmo.object !== target) st.gizmo.attach(target)
       } else if (st.gizmo.object) {
         st.gizmo.detach()
       }
-      st.gizmo.setMode(propsRef.current.transformMode ?? "translate")
-    }, [selectedId, transformMode, items])
+      // scale 对 rig 禁用（spec §4.2）：保持最近 translate/rotate + 一次性 toast
+      if (rig && mode === "scale") {
+        st.gizmo.setMode(rigModeRef.current)
+        const key = String(selectedRigIndex)
+        if (scaleToastKeyRef.current !== key) {
+          scaleToastKeyRef.current = key
+          toast.add({ title: "机位不支持缩放", type: "warning" })
+        }
+      } else {
+        scaleToastKeyRef.current = null
+        if (rig) rigModeRef.current = mode === "rotate" ? "rotate" : "translate"
+        st.gizmo.setMode(mode)
+      }
+    }, [selectedId, selectedRigIndex, transformMode, viewMode, items, shots, ue4Epoch])
 
     // —— 拾取修复与手势仲裁（点击 vs ≥5px 拖拽；gizmo 激活时本通道让位） ——
     const pickAt = (clientX: number, clientY: number): { id: string | null; obj: THREE.Object3D | null } => {
@@ -880,9 +831,10 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       }
       if (!st.dragArmed || !st.downAt.moved) return
       if (!st.dragging) {
-        // 过阈值 → 进入拖拽：选中 + 指针捕获
+        // 过阈值 → 进入拖拽：选中 + 指针捕获（图元拖拽同时取消 rig 选中，gizmo 让位图元）
         const id = st.downAt.id
         if (!id) return
+        setSelectedRigIndex(null)
         propsRef.current.onSelect(id)
         st.dragId = id
         st.dragging = true
@@ -937,12 +889,19 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       if (!cancelled && st.downAt && !st.downAt.moved) {
         const { id, obj } = st.downAt
         if (id === "__camera__" && obj) {
+          // rig 点击：选中 rig（gizmo 挂 rig 组）+ 切换分镜；同时清空图元选中（不占用 selectedId）
           const shot = ancestorShotIndex(obj)
-          if (shot != null) propsRef.current.onSelectShot?.(shot)
+          if (shot != null) {
+            setSelectedRigIndex(shot)
+            propsRef.current.onSelectShot?.(shot)
+          }
           propsRef.current.onSelect(null)
         } else if (id && id !== "__ground__") {
+          setSelectedRigIndex(null)
           propsRef.current.onSelect(id)
         } else {
+          // 空点：取消图元选中 + 取消 rig 选中（spec §4.4）
+          setSelectedRigIndex(null)
           propsRef.current.onSelect(null)
         }
       }
@@ -988,7 +947,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         const cam = captureCam()
 
         /** 画幅 + 机位渲染：相机置入 shot（position/target/fov）、画幅 aspect；
-         *  并隐藏全部 hideFromViewportCapture 对象（地面/网格/机位 rig/gizmo helper/高亮层/CSS2D 层天然排除）。 */
+         *  并隐藏全部 hideFromViewportCapture 对象（地面/网格/机位 rig/gizmo helper/CSS2D 层天然排除）。 */
         const withCaptureView = <T,>(fn: () => T): T => {
           const prevPos = s.camera.position.clone()
           const prevTarget = s.controls.target.clone()
@@ -1000,7 +959,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
           s.camera.fov = cam.fov
           s.camera.aspect = w / h
           s.camera.updateProjectionMatrix()
-          // 导出画面排除：hideFromViewportCapture=true 的全部对象（rig/网格/地面/gizmo/高亮/CSS2D 标签层）
+          // 导出画面排除：hideFromViewportCapture=true 的全部对象（rig/网格/地面/gizmo/CSS2D 标签层）
           const hidden: THREE.Object3D[] = []
           s.scene.traverse((o) => {
             if (o.userData.hideFromViewportCapture) {
@@ -1132,10 +1091,8 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         const w = MAP_BASE
         const h = Math.round(MAP_BASE / (16 / 9))
         const rt = new THREE.WebGLRenderTarget(w, h)
-        // 预览瞬态：仅排除选中高亮与变换 gizmo helper（地面/网格/机位 rig 保留导演视角上下文）
-        const prevHl = st.hlGroup.visible
+        // 预览瞬态：仅排除变换 gizmo helper（地面/网格/机位 rig 保留导演视角上下文）
         const prevGizmo = st.gizmo.getHelper().visible
-        st.hlGroup.visible = false
         st.gizmo.getHelper().visible = false
         try {
           for (let i = 0; i < count; i++) {
@@ -1170,7 +1127,6 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
             })
           }
         } finally {
-          st.hlGroup.visible = prevHl
           st.gizmo.getHelper().visible = prevGizmo
           st.camera.position.copy(prevPos)
           st.camera.lookAt(tgt)

@@ -61,10 +61,12 @@ export interface BlockingItem {
   scale: [number, number, number]
   /** 角色染色（#rrggbb）；缺省按 kind 派生 */
   color?: string
-  /** 角色姿势：体型 + 姿势预设 + 关节角度（度，materialized 全量有效值） */
+  /** 角色体型（v3 起为 storyai 8 款 id：mannequin/female/broad/muscular/slim/teen/child/chibi，见 previs-poses BODY_TYPES） */
   bodyType?: string
+  /** 姿势预设 id（见 previs-poses POSE_PRESETS；stand 为空 controls 的默认姿势） */
   poseId?: string
-  controls?: Record<string, [number, number, number]>
+  /** 词表单值控制字典 v3：键 = POSE_VOCAB（度；body.offsetY 为米，负数下蹲）；仅记录非零/自定义值 */
+  controls?: Record<string, number>
 }
 
 export interface PrevisShot {
