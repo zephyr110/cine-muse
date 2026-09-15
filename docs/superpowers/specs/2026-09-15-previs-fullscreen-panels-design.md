@@ -178,18 +178,25 @@ FOV   [   ]
 ```ts
 export const SIDEBAR_SECTIONS = ["camera", "items", "pose", "transform"] as const
 export type SidebarSection = (typeof SIDEBAR_SECTIONS)[number]
+/** 结构类型而非 BlockingItem：纯模块不耦合应用类型；kind 实际含 character/prop/terrain */
+export type PanelSelection = { kind: string } | null
 
+/** 当前选择下适用的分区（顺序即 SIDEBAR_SECTIONS 顺序）：机位/布景项恒在；角色姿态仅角色；变换仅任意选中项 */
+export function applicableSections(item: PanelSelection): SidebarSection[]
+/** 选择变化时应自动展开的分区 = 适用分区中非默认展开的那些
+ *  角色 → ["pose","transform"]；道具 → ["transform"]；null → [] */
+export function sectionsForSelection(item: PanelSelection): SidebarSection[]
 /** 切换分区开合；返回新 Set，不改动入参 */
 export function toggleSection(open: ReadonlySet<SidebarSection>, id: SidebarSection): Set<SidebarSection>
-/** 确保分区展开（已展开时返回等值新 Set） */
+/** 确保分区展开；已展开时返回等值新 Set（调用方可无条件 setState） */
 export function openSection(open: ReadonlySet<SidebarSection>, id: SidebarSection): Set<SidebarSection>
-/** 选择 → 应自动展开的分区：角色 → ["transform","pose"]；道具 → ["transform"]；null → [] */
-export function sectionsForSelection(item: { kind: "character" | "prop" } | null): SidebarSection[]
 
 export const DEFAULT_OPEN_SECTIONS: ReadonlySet<SidebarSection>   // camera + items
 export const SIDEBAR_WIDTH_PX = 300
 export const SIDEBAR_RAIL_WIDTH_PX = 44
 ```
+
+`applicableSections` 同时驱动图标条的置灰判定（§2.3），使「哪些分区现在可用」只有一处定义、可单测。
 
 两个宽度常量**参与渲染**（`style={{ width: SIDEBAR_WIDTH_PX }}`），使测试锁定的值与实际布局同源，避免 class 与常量漂移。
 
