@@ -35,6 +35,7 @@ import {
   SIDEBAR_WIDTH_PX,
   applicableSections,
   openSection,
+  sectionsForSelection,
   toggleSection,
   type SidebarSection,
 } from "@/lib/engine/previs-panel-state"
@@ -447,6 +448,8 @@ function BlockingShotEditor({
   /** 侧栏展开的分区集合：本地即可——组件按 shot 重建时选择同时重置，自动展开会重新打开（spec §5） */
   const [openSections, setOpenSections] = React.useState<ReadonlySet<SidebarSection>>(DEFAULT_OPEN_SECTIONS)
   const sectionRefs = React.useRef<Partial<Record<SidebarSection, HTMLDivElement | null>>>({})
+  /** 图标条点击后待滚入视野的分区（一次性）；用 state 触发，避免在 rAF 里赌渲染时序 */
+  const [scrollTarget, setScrollTarget] = React.useState<SidebarSection | null>(null)
 
   // 撤销/重做从 reducer 回灌：props 快照键变化（外部恢复）→ 重置本地编辑态
   const propsKey = JSON.stringify([shot.blocking, shot.camera])
@@ -1011,7 +1014,25 @@ function BlockingShotEditor({
   const openAt = (id: SidebarSection) => {
     onSidebarCollapsedChange(false)
     setOpenSections((prev) => openSection(prev, id))
+    setScrollTarget(id)
   }
+
+  /** 选择变化 → 自动展开相关分区。
+   *  依赖只有 selKey：用户手动收起某分区后，只要选择不变就不会被"打架"重开（spec §3.3）。 */
+  const selKey = selectedItem ? `${selectedItem.id}:${selectedItem.kind}` : null
+  React.useEffect(() => {
+    for (const id of sectionsForSelection(selectedItem ?? null)) {
+      setOpenSections((prev) => openSection(prev, id))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅以 selKey 为依赖：若改依赖 selectedItem/items，每次 store 更新都会重跑并重新打开用户刚手动收起的分区
+  }, [selKey])
+
+  React.useEffect(() => {
+    if (!scrollTarget) return
+    // 先清空再滚动：重置为 null 也会触发一次本 effect，靠上面的 early-return 短路
+    setScrollTarget(null)
+    sectionRefs.current[scrollTarget]?.scrollIntoView({ block: "nearest" })
+  }, [scrollTarget])
 
   /** 变换分组：位置/旋转/缩放精确输入 + 角色标签开关（仅 fullscreen，选中任意布景项） */
   const transformEl =
