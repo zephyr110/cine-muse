@@ -29,6 +29,7 @@ import { toast } from "@/components/ui/toast"
 import { useApp } from "@/lib/store"
 import { injectMarkerIds, renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { isPrevisArtifact } from "@/lib/engine/previs-types"
+import { nextCharacterPosition, nextPastePosition } from "@/lib/engine/previs-placement"
 import {
   DEFAULT_OPEN_SECTIONS,
   SIDEBAR_RAIL_WIDTH_PX,
@@ -66,10 +67,7 @@ const SVG_W = 480
 const SVG_H = 270
 const PX_PER_UNIT = 48
 
-/** 新增角色网格落位范围（仅 addCharacter 的自动摆位使用）：用户提交/拖拽已不再钳制（spec §4.4） */
-const X_RANGE = { min: -SVG_W / 2 / PX_PER_UNIT, max: SVG_W / 2 / PX_PER_UNIT } // [-5, 5]
-const Z_RANGE = { min: 1 - SVG_H / 2 / PX_PER_UNIT, max: 1 + SVG_H / 2 / PX_PER_UNIT } // [-1.8125, 3.8125]
-/** 机位/FOV 仍按范围钳制（相机参数非自由摆放语义） */
+/** 机位/FOV 仍按范围钳制（相机参数非自由摆放语义）；图元落位不钳制（spec §4.4，摆位收敛见 previs-placement） */
 const CAM_RANGE = { min: -20, max: 20 }
 const FOV_RANGE = { min: 5, max: 150 }
 
@@ -748,17 +746,15 @@ function BlockingShotEditor({
     },
   ) => handleTransform(id, patch, true)
 
-  /** 添加角色：色盘轮转 + 网格落位（与默认布景同区、避免互相重叠） + 自动选中 */
+  /** 添加角色：色盘轮转 + 网格落位（取第一个空闲槽，不与已有角色重叠） + 自动选中 */
   const addCharacter = (bodyType: string) => {
     const chars = items.filter((b) => b.kind === "character")
     const id = randomItemId("ch")
-    const col = (chars.length % 4) - 1.5 // -1.5 -0.5 0.5 1.5
-    const row = Math.floor(chars.length / 4)
     const item: BlockingItem = {
       id,
       kind: "character",
       name: `角色${String(chars.length + 1).padStart(2, "0")}`,
-      position: [round2(clamp(col * 1.25, X_RANGE)), 0, round2(clamp(1 + row * 0.8, Z_RANGE))],
+      position: nextCharacterPosition(items),
       rotation: [0, 0, 0],
       scale: [1, 1, 1],
       color: nextPaletteColor(items),
@@ -800,8 +796,8 @@ function BlockingShotEditor({
       ...source,
       id: randomItemId("c"),
       name: `${source.name} 副本`,
-      // v2：粘贴保留源 y（几何中心/脚底语义）；x/z 沿用旧的错位 +1 惯例（不钳制，spec §4.4）
-      position: [round2(source.position[0] + 1), source.position[1], round2(source.position[2] + 1)],
+      // v2：粘贴保留源 y（几何中心/脚底语义）；x/z 沿用错位 +1 惯例，已被占用时继续外推（不钳制，spec §4.4）
+      position: nextPastePosition(items, source),
       rotation: [...source.rotation] as [number, number, number],
       scale: [...source.scale] as [number, number, number],
     }
