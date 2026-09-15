@@ -2,26 +2,43 @@
 
 import * as React from "react"
 import {
+  BoxesIcon,
   CameraIcon,
   ChevronRightIcon,
   ClipboardIcon,
   CopyIcon,
   FrameIcon,
+  Grid3x3Icon,
   ImageIcon,
   Move3dIcon,
   OrbitIcon,
+  PanelRightCloseIcon,
+  PanelRightOpenIcon,
+  PersonStandingIcon,
   Redo2Icon,
   Rotate3dIcon,
   RotateCcwIcon,
   Scale3dIcon,
+  SlidersHorizontalIcon,
   Undo2Icon,
   UserPlusIcon,
 } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
 
 import { toast } from "@/components/ui/toast"
 import { useApp } from "@/lib/store"
 import { injectMarkerIds, renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { isPrevisArtifact } from "@/lib/engine/previs-types"
+import {
+  DEFAULT_OPEN_SECTIONS,
+  SIDEBAR_RAIL_WIDTH_PX,
+  SIDEBAR_WIDTH_PX,
+  applicableSections,
+  openSection,
+  sectionsForSelection,
+  toggleSection,
+  type SidebarSection,
+} from "@/lib/engine/previs-panel-state"
 import {
   BODY_TYPES,
   POSE_GROUPS,
@@ -117,8 +134,9 @@ function NumField({
   )
 }
 
-/** 构图辅助：画幅比例框（外围遮罩）+ 三分线/九宫格（纯 DOM） */
-function FrameOverlay({ aspect }: { aspect: MapAspect }) {
+/** 构图辅助：画幅比例框（外围遮罩）+ 三分线/九宫格（纯 DOM）。
+ *  showGuides=false 时只保留遮罩——画幅边界信息不可丢（spec §4）。 */
+function FrameOverlay({ aspect, showGuides }: { aspect: MapAspect; showGuides: boolean }) {
   const ratio = aspect === "16:9" ? "16 / 9" : aspect === "9:16" ? "9 / 16" : "1 / 1"
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
@@ -131,10 +149,14 @@ function FrameOverlay({ aspect }: { aspect: MapAspect }) {
           boxShadow: "0 0 0 9999px rgba(0,0,0,0.22)",
         }}
       >
-        <div className="absolute top-0 bottom-0 left-1/3 w-px bg-white/30" />
-        <div className="absolute top-0 bottom-0 left-2/3 w-px bg-white/30" />
-        <div className="absolute right-0 left-0 top-1/3 h-px bg-white/30" />
-        <div className="absolute right-0 left-0 top-2/3 h-px bg-white/30" />
+        {showGuides && (
+          <>
+            <div className="absolute top-0 bottom-0 left-1/3 w-px bg-white/30" />
+            <div className="absolute top-0 bottom-0 left-2/3 w-px bg-white/30" />
+            <div className="absolute right-0 left-0 top-1/3 h-px bg-white/30" />
+            <div className="absolute right-0 left-0 top-2/3 h-px bg-white/30" />
+          </>
+        )}
       </div>
     </div>
   )
@@ -267,7 +289,7 @@ function TransformGroup({
   return (
     <div className="space-y-1.5 rounded-md border border-border/60 p-2.5">
       <p className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-        变换 · {item.name}
+        {item.name}
         <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">
           {item.kind === "character" ? "角色" : item.kind === "prop" ? "道具" : "地形"}
         </span>
@@ -311,10 +333,75 @@ function TransformGroup({
   )
 }
 
-/** 单镜头编辑：拖拽/选中微调/坐标输入 + 机位参数 + 重新渲染；inline 堆叠 / fullscreen 三栏 */
+/** 图标条分区图标（顺序与 SIDEBAR_SECTIONS 一致；label 同时用作 title/aria-label） */
+const SIDEBAR_RAIL_ITEMS: { id: SidebarSection; label: string; Icon: LucideIcon }[] = [
+  { id: "camera", label: "机位", Icon: CameraIcon },
+  { id: "items", label: "布景项", Icon: BoxesIcon },
+  { id: "pose", label: "角色姿态", Icon: PersonStandingIcon },
+  { id: "transform", label: "变换", Icon: Move3dIcon },
+]
+
+/** 图标条按钮（侧栏收起态）：禁用时半透明且不可点 */
+function RailButton({
+  label, disabled, onClick, children,
+}: {
+  label: string
+  disabled?: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+    >
+      {children}
+    </button>
+  )
+}
+
+/** 侧栏分区（受控手风琴）：允许多个同时展开；折叠 = 内容卸载。
+ *  例外：角色姿态内部 11 组滑杆是非受控 <details>，其展开状态随卸载丢失（滑杆值本身在 store，无数据损失）。 */
+function SidebarSection({
+  label, badge, open, onToggle, sectionRef, children,
+}: {
+  label: string
+  badge?: React.ReactNode
+  open: boolean
+  onToggle: () => void
+  sectionRef?: (el: HTMLDivElement | null) => void
+  children: React.ReactNode
+}) {
+  return (
+    <div ref={sectionRef} className="border-b border-border/50 last:border-b-0">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="flex w-full items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-foreground/5"
+      >
+        <ChevronRightIcon className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
+        {label}
+        {badge != null && (
+          <span className="ml-auto truncate rounded-full bg-primary/10 px-1.5 text-[10px] tabular-nums text-primary">
+            {badge}
+          </span>
+        )}
+      </button>
+      {open && <div className="px-2 pb-2">{children}</div>}
+    </div>
+  )
+}
+
+/** 单镜头编辑：拖拽/选中微调/坐标输入 + 机位参数 + 重新渲染；inline 堆叠 / fullscreen 两栏 */
 function BlockingShotEditor({
   projectId, stage, shotIndex, shot, shots, shotsCount, onShotIndexChange, onDone, variant = "inline",
-  rigSelected = false, onRigSelect,
+  rigSelected = false, onRigSelect, showGuides, onShowGuidesChange,
+  sidebarCollapsed, onSidebarCollapsedChange,
 }: {
   projectId: string
   stage: WorkflowStage
@@ -329,6 +416,12 @@ function BlockingShotEditor({
   rigSelected?: boolean
   /** rig 选中变更：number = 选中该索引机位；null = 清除（图元/空点/切镜头） */
   onRigSelect?: (index: number | null) => void
+  /** 构图辅助（画幅三分线）显示开关——父级持有：编辑器按 shot 重建（key=index），视图偏好须跨重建存活 */
+  showGuides: boolean
+  onShowGuidesChange: (v: boolean) => void
+  /** 侧栏收起态——父级持有：编辑器按 shot 重建，布局偏好不该被重置（spec §5） */
+  sidebarCollapsed: boolean
+  onSidebarCollapsedChange: (v: boolean) => void
 }) {
   const { state, dispatch } = useApp()
   const [items, setItems] = React.useState<BlockingItem[]>(shot.blocking)
@@ -353,6 +446,11 @@ function BlockingShotEditor({
   const viewportRef = React.useRef<PrevisViewportHandle | null>(null)
   const svgBoxRef = React.useRef<HTMLDivElement | null>(null)
   const stageBoxRef = React.useRef<HTMLDivElement | null>(null)
+  /** 侧栏展开的分区集合：本地即可——组件按 shot 重建时选择同时重置，自动展开会重新打开（spec §5） */
+  const [openSections, setOpenSections] = React.useState<ReadonlySet<SidebarSection>>(DEFAULT_OPEN_SECTIONS)
+  const sectionRefs = React.useRef<Partial<Record<SidebarSection, HTMLDivElement | null>>>({})
+  /** 图标条点击后待滚入视野的分区（一次性）；用 state 触发，避免在 rAF 里赌渲染时序 */
+  const [scrollTarget, setScrollTarget] = React.useState<SidebarSection | null>(null)
 
   // 撤销/重做从 reducer 回灌：props 快照键变化（外部恢复）→ 重置本地编辑态
   const propsKey = JSON.stringify([shot.blocking, shot.camera])
@@ -759,7 +857,7 @@ function BlockingShotEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 处理函数每次渲染重建；仅需在其依赖的状态变化时重挂监听
   }, [variant, selected, items, clipboard, camera])
 
-  // —— 布局区块：inline 堆叠、fullscreen 三栏，共用同一交互逻辑 ——
+  // —— 布局区块：inline 堆叠、fullscreen 两栏（画布 + 可折叠侧栏），共用同一交互逻辑 ——
   const canvasEl = (
     <div
       ref={svgBoxRef}
@@ -808,37 +906,54 @@ function BlockingShotEditor({
       {variant === "fullscreen" && (
         <>
           <span className="mx-1 h-4 w-px bg-border" />
-          <div className="ml-auto flex items-center rounded-md border border-border bg-muted/40 p-0.5 text-xs">
+          <div className="ml-auto flex items-center gap-1.5">
+            {/* 构图辅助放此处而非画布 pill：pill 仅在导演视角渲染，而三分线在机位视角才是主要用途（spec §4） */}
             <button
               type="button"
-              onClick={() => {
-                setOpenMenu(null)
-                setViewMode("director")
-              }}
+              aria-pressed={showGuides}
+              title="构图辅助：画幅九宫格三分线"
+              onClick={() => onShowGuidesChange(!showGuides)}
               className={cn(
-                "rounded px-2 py-0.5 transition-colors",
-                viewMode === "director"
-                  ? "bg-background font-medium shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
+                "flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors",
+                showGuides
+                  ? "border-primary/60 bg-primary/10 font-medium"
+                  : "border-border/60 text-muted-foreground hover:border-primary/30",
               )}
             >
-              导演视角
+              <Grid3x3Icon className="size-3.5" /> 构图辅助
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setOpenMenu(null)
-                setViewMode("camera")
-              }}
-              className={cn(
-                "rounded px-2 py-0.5 transition-colors",
-                viewMode === "camera"
-                  ? "bg-background font-medium shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              机位视角
-            </button>
+            <div className="flex items-center rounded-md border border-border bg-muted/40 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenMenu(null)
+                  setViewMode("director")
+                }}
+                className={cn(
+                  "rounded px-2 py-0.5 transition-colors",
+                  viewMode === "director"
+                    ? "bg-background font-medium shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                导演视角
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenMenu(null)
+                  setViewMode("camera")
+                }}
+                className={cn(
+                  "rounded px-2 py-0.5 transition-colors",
+                  viewMode === "camera"
+                    ? "bg-background font-medium shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                机位视角
+              </button>
+            </div>
           </div>
         </>
       )}
@@ -848,7 +963,7 @@ function BlockingShotEditor({
   const itemsEl = (
     <div className="flex flex-col gap-1">
       {variant === "fullscreen" && (
-        <p className="text-[11px] font-medium text-muted-foreground">布景项（点击选中，方向键微调）</p>
+        <p className="text-[10px] text-muted-foreground">点击选中，方向键微调</p>
       )}
       {draggable.length > 0 ? (
         draggable.map((b) => (
@@ -894,6 +1009,32 @@ function BlockingShotEditor({
 
   const selectedItem = items.find((b) => b.id === selected)
 
+  /** 当前选择下适用的分区：驱动图标条置灰与条件分区渲染（spec §2.3/§3.1） */
+  const applicable = new Set(applicableSections(selectedItem ? { kind: selectedItem.kind } : null))
+  const toggleSec = (id: SidebarSection) => setOpenSections((prev) => toggleSection(prev, id))
+  const openAt = (id: SidebarSection) => {
+    onSidebarCollapsedChange(false)
+    setOpenSections((prev) => openSection(prev, id))
+    setScrollTarget(id)
+  }
+
+  /** 选择变化 → 自动展开相关分区。
+   *  依赖只有 selKey：用户手动收起某分区后，只要选择不变就不会被"打架"重开（spec §3.3）。 */
+  const selKey = selectedItem ? `${selectedItem.id}:${selectedItem.kind}` : null
+  React.useEffect(() => {
+    for (const id of sectionsForSelection(selectedItem ?? null)) {
+      setOpenSections((prev) => openSection(prev, id))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅以 selKey 为依赖：若改依赖 selectedItem/items，每次 store 更新都会重跑并重新打开用户刚手动收起的分区
+  }, [selKey])
+
+  React.useEffect(() => {
+    if (!scrollTarget) return
+    // 先清空再滚动：重置为 null 也会触发一次本 effect，靠上面的 early-return 短路
+    setScrollTarget(null)
+    sectionRefs.current[scrollTarget]?.scrollIntoView({ block: "nearest" })
+  }, [scrollTarget])
+
   /** 变换分组：位置/旋转/缩放精确输入 + 角色标签开关（仅 fullscreen，选中任意布景项） */
   const transformEl =
     variant === "fullscreen" && selectedItem ? (
@@ -911,10 +1052,7 @@ function BlockingShotEditor({
    *  写回 v3 controls 单值键（整体 blocking 替换语义不变）。 */
   const poseEl =
     variant === "fullscreen" && selectedItem?.kind === "character" ? (
-      <div className="rounded-md border border-border/60 p-2">
-        <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-          <ClipboardIcon className="size-3" /> 角色姿态 · {selectedItem.name}
-        </p>
+      <div className="flex flex-col">
         <div className="flex gap-2">
           <select
             value={selectedItem.bodyType ?? "mannequin"}
@@ -1015,25 +1153,32 @@ function BlockingShotEditor({
         rigSelected ? "border-primary/60 bg-primary/5 ring-1 ring-primary/30" : "border-border/60",
       )}
     >
-      <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-        <CameraIcon className="size-3" /> 机位参数 · {rigLabel(shotIndex)}（视锥随目标实时变化）
-      </p>
-      <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-7">
-        {(["position", "target"] as const).map((axis) =>
-          (["x", "y", "z"] as const).map((letter, idx) => (
-            <label key={`${axis}-${letter}`} className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-              {axis === "position" ? "机位" : "目标"} {letter.toUpperCase()}
-              <NumField
-                value={camera[axis][idx as 0 | 1 | 2]}
-                step={0.5}
-                onCommit={(v) => setCameraAxis(axis, idx as 0 | 1 | 2, v)}
-                ariaLabel={`${axis === "position" ? "机位" : "目标"} ${letter.toUpperCase()}`}
-              />
-            </label>
-          )),
-        )}
-        <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-          FOV（度）
+      {variant === "fullscreen" ? (
+        <p className="mb-1.5 text-[10px] text-muted-foreground">视锥随目标实时变化</p>
+      ) : (
+        <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+          <CameraIcon className="size-3" /> 机位参数 · {rigLabel(shotIndex)}（视锥随目标实时变化）
+        </p>
+      )}
+      <div className="flex flex-col gap-1.5">
+        {(["position", "target"] as const).map((axis) => (
+          <div key={axis} className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <span className="w-8 shrink-0">{axis === "position" ? "机位" : "目标"}</span>
+            {(["x", "y", "z"] as const).map((letter, idx) => (
+              <React.Fragment key={letter}>
+                <span className="shrink-0 text-[10px]">{letter.toUpperCase()}</span>
+                <NumField
+                  value={camera[axis][idx as 0 | 1 | 2]}
+                  step={0.5}
+                  onCommit={(v) => setCameraAxis(axis, idx as 0 | 1 | 2, v)}
+                  ariaLabel={`${axis === "position" ? "机位" : "目标"} ${letter.toUpperCase()}`}
+                />
+              </React.Fragment>
+            ))}
+          </div>
+        ))}
+        <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          <span className="w-8 shrink-0">FOV°</span>
           <NumField value={camera.fov} step={5} onCommit={setCameraFov} ariaLabel="视野角度 FOV" />
         </label>
       </div>
@@ -1136,14 +1281,8 @@ function BlockingShotEditor({
     return (
       <>
         {styleEl}
-        <div className="grid h-full min-h-0 grid-cols-[220px_minmax(0,1fr)_280px] gap-4">
-          <div className="flex min-h-0 flex-col gap-4 overflow-y-auto pr-1">
-            {undoRedoEl}
-            {shotSelectorEl}
-            {copyPasteEl}
-            {itemsEl}
-          </div>
-          <div className="flex min-h-0 flex-col gap-3">
+        <div className="flex h-full min-h-0 gap-3">
+          <div className="flex min-h-0 flex-1 flex-col gap-3">
             {centerTabsEl}
             <div
               ref={stageBoxRef}
@@ -1282,7 +1421,7 @@ function BlockingShotEditor({
                       )}
                     </>
                   )}
-                  <FrameOverlay aspect={aspect} />
+                  <FrameOverlay aspect={aspect} showGuides={showGuides} />
                 </div>
               ) : (
                 <div className="flex h-full items-center justify-center bg-muted/20 p-2">
@@ -1322,12 +1461,123 @@ function BlockingShotEditor({
               </div>
             )}
           </div>
-          <div className="flex min-h-0 flex-col gap-4 overflow-y-auto pl-1">
-            {transformEl}
-            {poseEl}
-            {cameraEl}
-            {actionsEl}
-          </div>
+          {sidebarCollapsed ? (
+            /* 收起态：44px 图标条——分区图标常驻（不适用时置灰而非隐藏，避免位置跳动），撤销/重做常驻底部 */
+            <aside
+              style={{ width: SIDEBAR_RAIL_WIDTH_PX }}
+              className="flex shrink-0 flex-col items-center gap-0.5 rounded-md border bg-muted/20 py-2"
+            >
+              <RailButton label="展开侧栏" onClick={() => onSidebarCollapsedChange(false)}>
+                <PanelRightOpenIcon className="size-4" />
+              </RailButton>
+              <span className="my-0.5 h-px w-5 bg-border" />
+              {SIDEBAR_RAIL_ITEMS.map((item) => (
+                <RailButton
+                  key={item.id}
+                  label={item.label}
+                  disabled={!applicable.has(item.id)}
+                  onClick={() => openAt(item.id)}
+                >
+                  <item.Icon className="size-4" />
+                </RailButton>
+              ))}
+              <div className="mt-auto flex flex-col items-center gap-0.5">
+                <RailButton
+                  label="撤销"
+                  disabled={state.previsUndo.past.length === 0}
+                  onClick={undo}
+                >
+                  <Undo2Icon className="size-4" />
+                </RailButton>
+                <RailButton
+                  label="重做"
+                  disabled={state.previsUndo.future.length === 0}
+                  onClick={redo}
+                >
+                  <Redo2Icon className="size-4" />
+                </RailButton>
+              </div>
+            </aside>
+          ) : (
+            /* 展开态：头部 + 分区滚动区 + 固定底栏（底栏不随内容滚动） */
+            <aside
+              style={{ width: SIDEBAR_WIDTH_PX }}
+              className="flex shrink-0 flex-col rounded-md border bg-muted/20"
+            >
+              <header className="flex h-8 shrink-0 items-center gap-1.5 border-b px-2">
+                <SlidersHorizontalIcon className="size-3.5 text-muted-foreground" />
+                <span className="text-[11px] font-medium text-muted-foreground">预演控制</span>
+                <button
+                  type="button"
+                  title="收起侧栏"
+                  aria-label="收起侧栏"
+                  onClick={() => onSidebarCollapsedChange(true)}
+                  className="ml-auto rounded p-0.5 text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+                >
+                  <PanelRightCloseIcon className="size-4" />
+                </button>
+              </header>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <SidebarSection
+                  label="机位"
+                  badge={rigLabel(shotIndex)}
+                  open={openSections.has("camera")}
+                  onToggle={() => toggleSec("camera")}
+                  sectionRef={(el) => {
+                    sectionRefs.current.camera = el
+                  }}
+                >
+                  <div className="flex flex-col gap-2">
+                    {shotSelectorEl}
+                    {cameraEl}
+                  </div>
+                </SidebarSection>
+                <SidebarSection
+                  label="布景项"
+                  badge={draggable.length}
+                  open={openSections.has("items")}
+                  onToggle={() => toggleSec("items")}
+                  sectionRef={(el) => {
+                    sectionRefs.current.items = el
+                  }}
+                >
+                  {itemsEl}
+                </SidebarSection>
+                {applicable.has("pose") && (
+                  <SidebarSection
+                    label="角色姿态"
+                    badge={selectedItem?.name}
+                    open={openSections.has("pose")}
+                    onToggle={() => toggleSec("pose")}
+                    sectionRef={(el) => {
+                      sectionRefs.current.pose = el
+                    }}
+                  >
+                    {poseEl}
+                  </SidebarSection>
+                )}
+                {applicable.has("transform") && (
+                  <SidebarSection
+                    label="变换"
+                    open={openSections.has("transform")}
+                    onToggle={() => toggleSec("transform")}
+                    sectionRef={(el) => {
+                      sectionRefs.current.transform = el
+                    }}
+                  >
+                    {transformEl}
+                  </SidebarSection>
+                )}
+              </div>
+              <footer className="flex shrink-0 flex-col gap-2 border-t p-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {undoRedoEl}
+                  {copyPasteEl}
+                </div>
+                {actionsEl}
+              </footer>
+            </aside>
+          )}
         </div>
       </>
     )
@@ -1350,7 +1600,7 @@ function BlockingShotEditor({
 
 /**
  * 2D 布景干预（manual 模式专用）：镜头选择 + 布景拖拽/微调 + 机位参数 + 重新渲染。
- * variant="fullscreen" 时切换为三栏布局（左镜头/布景项 · 中画布+三图 · 右机位/操作）。
+ * variant="fullscreen" 时切换为两栏布局（中画布+三图 · 右「预演控制」折叠侧栏；收起态退化为图标条）。
  * 每镜编辑状态由 key 隔离，切换镜头自动重置。
  */
 export function PrevisBlockingEditor({
@@ -1377,6 +1627,10 @@ export function PrevisBlockingEditor({
     stageId: string
     index: number
   } | null>(null)
+  /** 构图辅助（三分线）显示开关——跨分镜存活：编辑器按 shot 重建，视图偏好不该被重置（spec §5） */
+  const [showGuides, setShowGuides] = React.useState(false)
+  /** 侧栏收起态——跨分镜存活：用户主动的布局选择，切分镜不该弹回（spec §5） */
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false)
   const rigSelectedIndex =
     rigSelection &&
     rigSelection.projectId === projectId &&
@@ -1404,6 +1658,10 @@ export function PrevisBlockingEditor({
       variant={variant}
       rigSelected={rigSelectedIndex === index}
       onRigSelect={selectRig}
+      showGuides={showGuides}
+      onShowGuidesChange={setShowGuides}
+      sidebarCollapsed={sidebarCollapsed}
+      onSidebarCollapsedChange={setSidebarCollapsed}
     />
   )
   return variant === "inline" ? (
