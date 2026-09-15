@@ -1,7 +1,7 @@
 # Previs 全屏编辑器「右侧栏收口 + 构图辅助开关」设计
 
 日期：2026-09-15（v0.1）
-状态：讨论稿（未编码）
+状态：已实现（验收状态见 §11）
 承前：`2026-09-03-previs-ue4-parity-design.md`（UE4 素体 1:1 复刻）已合入 main（`49d7e0b`）
 
 ## 0. 修订记录
@@ -96,7 +96,7 @@ v0.1（本版）：用户实测全屏编辑器后提出两项调整——(1) 3D 
 - 手风琴用**受控** `<button aria-expanded>` + 条件渲染，不用受控 `<details>`（`details` 的 `onToggle` 异步、受控语义不稳）。姿态面板内部 11 组滑杆继续用既有的非受控 `<details>`，不改。
 - **允许多个分区同时展开**（与姿态面板 11 组滑杆的既有做法一致）。
 - 默认展开 `camera` + `items`，其余收起。
-- 折叠 = 内容卸载。各面板状态全在 store / 父级，卸载无副作用。
+- 折叠 = 内容卸载。各面板状态全在 store / 父级，卸载无副作用。**例外（实现期修正）**：角色姿态内部 11 组滑杆是非受控 `<details>`（无 `open` 受控），其展开状态随卸载丢失——滑杆值本身在 store，无数据损失，仅损失「哪些组处于展开」这一视觉状态。
 
 ### 3.3 自动展开
 
@@ -120,8 +120,10 @@ useEffect(() => {
 const [scrollTarget, setScrollTarget] = React.useState<SidebarSection | null>(null)
 useEffect(() => {
   if (!scrollTarget) return
-  sectionRefs.current[scrollTarget]?.scrollIntoView({ block: "nearest" })
+  // 先清空再滚动：重置为 null 会再触发一次本 effect，靠上面的 early-return 短路。
+  // scrollTarget 已在闭包中捕获，清空不影响下面这次读取。
   setScrollTarget(null)
+  sectionRefs.current[scrollTarget]?.scrollIntoView({ block: "nearest" })
 }, [scrollTarget])
 ```
 
@@ -250,3 +252,5 @@ export const SIDEBAR_RAIL_WIDTH_PX = 44
 - `pnpm build`：全绿
 
 **人工浏览器验收**（spec §9 十项）：PENDING —— 需 `pnpm exec next dev -p 3001` 后人工逐项确认（无组件测试环境，布局/折叠/滚入视野均为 DOM 行为）。
+
+**已知门禁外偏差**：`previs-blocking-editor.tsx` 的 `:1025` / `:1033` 触发 2 处 `react-hooks/set-state-in-effect`（eslint 非本计划门禁，本文件在本次改动前即未通过 lint）。两处 effect 均为 spec §3.3 / §3.4 刻意设计的「按 key 变化推状态」，非疏漏；实现方未擅自添加未授权的规则抑制注释。此处单独记录，以免后续 lint 清理误判为意外引入。

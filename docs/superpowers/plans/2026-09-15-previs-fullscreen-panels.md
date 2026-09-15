@@ -954,6 +954,11 @@ git commit -m "feat(previs-panels): two-column layout with collapsible control s
 
 ---
 
+> **执行修订（`bedd91e`，实现期发现）**：本任务有两处步骤文本在实现后需要修正，代码已按修正版落地，重跑本计划时须按修正版执行：
+>
+> 1. **Step 6(b) 的标题删除必须按 `variant` 分支。** `cameraEl` 同时被 fullscreen 与 inline 两个分支渲染；inline（`stage-detail-drawer.tsx:113` 不传 `variant`，默认为 `"inline"`）没有侧栏分区标题来接管，无条件删除会让内联编辑器丢失面板标题与 `机位NN` 标签。删标题的理由（与新分区标题逐字重复）只成立于 fullscreen。
+> 2. **Step 5 重排网格时不得丢掉可见的 X/Y/Z 轴字母。** 原 7 列网格每个输入框带可见轴字母（`机位 X` 等）；改为按语义分行后若只保留行标签，六个输入框在视觉上无法区分（`NumField` 只渲染裸 `<input>`，标签仅在 `aria-label` 里）。spec §6 的示意图即为 `机位 [X] [Y] [Z]`。
+
 ### Task 4: 侧栏交互收口——自动展开与滚入视野
 
 Task 3 交付了可手动开合的侧栏；本任务补上「选择变化 → 相关分区自动展开」与「点图标条 → 展开并滚入视野」。这两项可被单独驳回而不影响 Task 3。

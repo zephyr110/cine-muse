@@ -364,7 +364,8 @@ function RailButton({
   )
 }
 
-/** 侧栏分区（受控手风琴）：允许多个同时展开；折叠 = 内容卸载（各面板状态都在 store/父级） */
+/** 侧栏分区（受控手风琴）：允许多个同时展开；折叠 = 内容卸载。
+ *  例外：角色姿态内部 11 组滑杆是非受控 <details>，其展开状态随卸载丢失（滑杆值本身在 store，无数据损失）。 */
 function SidebarSection({
   label, badge, open, onToggle, sectionRef, children,
 }: {
@@ -856,7 +857,7 @@ function BlockingShotEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 处理函数每次渲染重建；仅需在其依赖的状态变化时重挂监听
   }, [variant, selected, items, clipboard, camera])
 
-  // —— 布局区块：inline 堆叠、fullscreen 三栏，共用同一交互逻辑 ——
+  // —— 布局区块：inline 堆叠、fullscreen 两栏（画布 + 可折叠侧栏），共用同一交互逻辑 ——
   const canvasEl = (
     <div
       ref={svgBoxRef}
@@ -1165,7 +1166,7 @@ function BlockingShotEditor({
             <span className="w-8 shrink-0">{axis === "position" ? "机位" : "目标"}</span>
             {(["x", "y", "z"] as const).map((letter, idx) => (
               <React.Fragment key={letter}>
-                <span className="shrink-0 text-[10px] opacity-70">{letter.toUpperCase()}</span>
+                <span className="shrink-0 text-[10px]">{letter.toUpperCase()}</span>
                 <NumField
                   value={camera[axis][idx as 0 | 1 | 2]}
                   step={0.5}
@@ -1177,7 +1178,7 @@ function BlockingShotEditor({
           </div>
         ))}
         <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          <span className="w-8 shrink-0">FOV</span>
+          <span className="w-8 shrink-0">FOV°</span>
           <NumField value={camera.fov} step={5} onCommit={setCameraFov} ariaLabel="视野角度 FOV" />
         </label>
       </div>
