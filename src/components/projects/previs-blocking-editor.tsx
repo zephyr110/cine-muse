@@ -1131,19 +1131,27 @@ function BlockingShotEditor({
         rigSelected ? "border-primary/60 bg-primary/5 ring-1 ring-primary/30" : "border-border/60",
       )}
     >
-      <p className="mb-1.5 text-[10px] text-muted-foreground">视锥随目标实时变化</p>
+      {variant === "fullscreen" ? (
+        <p className="mb-1.5 text-[10px] text-muted-foreground">视锥随目标实时变化</p>
+      ) : (
+        <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+          <CameraIcon className="size-3" /> 机位参数 · {rigLabel(shotIndex)}（视锥随目标实时变化）
+        </p>
+      )}
       <div className="flex flex-col gap-1.5">
         {(["position", "target"] as const).map((axis) => (
           <div key={axis} className="flex items-center gap-1 text-[11px] text-muted-foreground">
             <span className="w-8 shrink-0">{axis === "position" ? "机位" : "目标"}</span>
             {(["x", "y", "z"] as const).map((letter, idx) => (
-              <NumField
-                key={letter}
-                value={camera[axis][idx as 0 | 1 | 2]}
-                step={0.5}
-                onCommit={(v) => setCameraAxis(axis, idx as 0 | 1 | 2, v)}
-                ariaLabel={`${axis === "position" ? "机位" : "目标"} ${letter.toUpperCase()}`}
-              />
+              <React.Fragment key={letter}>
+                <span className="shrink-0 text-[10px] opacity-70">{letter.toUpperCase()}</span>
+                <NumField
+                  value={camera[axis][idx as 0 | 1 | 2]}
+                  step={0.5}
+                  onCommit={(v) => setCameraAxis(axis, idx as 0 | 1 | 2, v)}
+                  ariaLabel={`${axis === "position" ? "机位" : "目标"} ${letter.toUpperCase()}`}
+                />
+              </React.Fragment>
             ))}
           </div>
         ))}
