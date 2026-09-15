@@ -240,3 +240,13 @@ export const SIDEBAR_RAIL_WIDTH_PX = 44
 - **收起态能力损失**：复制/粘贴/重新渲染/机位参数在收起态不可达（需先展开）。取舍：图标条只常驻撤销/重做两项最高频操作，避免图标条退化成第二排按钮墙。
 - **`showLabels` 不一致**：本次把 `showGuides` 上提而 `showLabels` 仍每分镜重置，同属「视图偏好」却行为不同。已知不一致，不在本次范围。
 - **滚入视野的时序**：依赖 `openSections` 与 `scrollTarget` 同批次更新后 effect 在渲染后运行。若实测出现「点了没滚」，退化为不做滚入视野（§3.4 可独立删除，不影响其余）。
+
+## 11. 验收状态
+
+**自动门禁**（head `cf2fbb4`）：
+
+- `pnpm exec tsc --noEmit`：0 errors
+- `pnpm test`：126 passed / 10 files（基线 119 / 9 files + 新增 `previs-panel-state.test.ts` 7 例）
+- `pnpm build`：全绿
+
+**人工浏览器验收**（spec §9 十项）：PENDING —— 需 `pnpm exec next dev -p 3001` 后人工逐项确认（无组件测试环境，布局/折叠/滚入视野均为 DOM 行为）。
