@@ -7,6 +7,7 @@ import {
   ClipboardIcon,
   CopyIcon,
   FrameIcon,
+  Grid3x3Icon,
   ImageIcon,
   Move3dIcon,
   OrbitIcon,
@@ -117,8 +118,9 @@ function NumField({
   )
 }
 
-/** 构图辅助：画幅比例框（外围遮罩）+ 三分线/九宫格（纯 DOM） */
-function FrameOverlay({ aspect }: { aspect: MapAspect }) {
+/** 构图辅助：画幅比例框（外围遮罩）+ 三分线/九宫格（纯 DOM）。
+ *  showGuides=false 时只保留遮罩——画幅边界信息不可丢（spec §4）。 */
+function FrameOverlay({ aspect, showGuides }: { aspect: MapAspect; showGuides: boolean }) {
   const ratio = aspect === "16:9" ? "16 / 9" : aspect === "9:16" ? "9 / 16" : "1 / 1"
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
@@ -131,10 +133,14 @@ function FrameOverlay({ aspect }: { aspect: MapAspect }) {
           boxShadow: "0 0 0 9999px rgba(0,0,0,0.22)",
         }}
       >
-        <div className="absolute top-0 bottom-0 left-1/3 w-px bg-white/30" />
-        <div className="absolute top-0 bottom-0 left-2/3 w-px bg-white/30" />
-        <div className="absolute right-0 left-0 top-1/3 h-px bg-white/30" />
-        <div className="absolute right-0 left-0 top-2/3 h-px bg-white/30" />
+        {showGuides && (
+          <>
+            <div className="absolute top-0 bottom-0 left-1/3 w-px bg-white/30" />
+            <div className="absolute top-0 bottom-0 left-2/3 w-px bg-white/30" />
+            <div className="absolute right-0 left-0 top-1/3 h-px bg-white/30" />
+            <div className="absolute right-0 left-0 top-2/3 h-px bg-white/30" />
+          </>
+        )}
       </div>
     </div>
   )
@@ -314,7 +320,7 @@ function TransformGroup({
 /** 单镜头编辑：拖拽/选中微调/坐标输入 + 机位参数 + 重新渲染；inline 堆叠 / fullscreen 三栏 */
 function BlockingShotEditor({
   projectId, stage, shotIndex, shot, shots, shotsCount, onShotIndexChange, onDone, variant = "inline",
-  rigSelected = false, onRigSelect,
+  rigSelected = false, onRigSelect, showGuides, onShowGuidesChange,
 }: {
   projectId: string
   stage: WorkflowStage
@@ -329,6 +335,9 @@ function BlockingShotEditor({
   rigSelected?: boolean
   /** rig 选中变更：number = 选中该索引机位；null = 清除（图元/空点/切镜头） */
   onRigSelect?: (index: number | null) => void
+  /** 构图辅助（画幅三分线）显示开关——父级持有：编辑器按 shot 重建（key=index），视图偏好须跨重建存活 */
+  showGuides: boolean
+  onShowGuidesChange: (v: boolean) => void
 }) {
   const { state, dispatch } = useApp()
   const [items, setItems] = React.useState<BlockingItem[]>(shot.blocking)
@@ -808,37 +817,54 @@ function BlockingShotEditor({
       {variant === "fullscreen" && (
         <>
           <span className="mx-1 h-4 w-px bg-border" />
-          <div className="ml-auto flex items-center rounded-md border border-border bg-muted/40 p-0.5 text-xs">
+          <div className="ml-auto flex items-center gap-1.5">
+            {/* 构图辅助放此处而非画布 pill：pill 仅在导演视角渲染，而三分线在机位视角才是主要用途（spec §4） */}
             <button
               type="button"
-              onClick={() => {
-                setOpenMenu(null)
-                setViewMode("director")
-              }}
+              aria-pressed={showGuides}
+              title="构图辅助：画幅九宫格三分线"
+              onClick={() => onShowGuidesChange(!showGuides)}
               className={cn(
-                "rounded px-2 py-0.5 transition-colors",
-                viewMode === "director"
-                  ? "bg-background font-medium shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
+                "flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors",
+                showGuides
+                  ? "border-primary/60 bg-primary/10 font-medium"
+                  : "border-border/60 text-muted-foreground hover:border-primary/30",
               )}
             >
-              导演视角
+              <Grid3x3Icon className="size-3.5" /> 构图辅助
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setOpenMenu(null)
-                setViewMode("camera")
-              }}
-              className={cn(
-                "rounded px-2 py-0.5 transition-colors",
-                viewMode === "camera"
-                  ? "bg-background font-medium shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              机位视角
-            </button>
+            <div className="flex items-center rounded-md border border-border bg-muted/40 p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenMenu(null)
+                  setViewMode("director")
+                }}
+                className={cn(
+                  "rounded px-2 py-0.5 transition-colors",
+                  viewMode === "director"
+                    ? "bg-background font-medium shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                导演视角
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenMenu(null)
+                  setViewMode("camera")
+                }}
+                className={cn(
+                  "rounded px-2 py-0.5 transition-colors",
+                  viewMode === "camera"
+                    ? "bg-background font-medium shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                机位视角
+              </button>
+            </div>
           </div>
         </>
       )}
@@ -1282,7 +1308,7 @@ function BlockingShotEditor({
                       )}
                     </>
                   )}
-                  <FrameOverlay aspect={aspect} />
+                  <FrameOverlay aspect={aspect} showGuides={showGuides} />
                 </div>
               ) : (
                 <div className="flex h-full items-center justify-center bg-muted/20 p-2">
@@ -1377,6 +1403,8 @@ export function PrevisBlockingEditor({
     stageId: string
     index: number
   } | null>(null)
+  /** 构图辅助（三分线）显示开关——跨分镜存活：编辑器按 shot 重建，视图偏好不该被重置（spec §5） */
+  const [showGuides, setShowGuides] = React.useState(false)
   const rigSelectedIndex =
     rigSelection &&
     rigSelection.projectId === projectId &&
@@ -1404,6 +1432,8 @@ export function PrevisBlockingEditor({
       variant={variant}
       rigSelected={rigSelectedIndex === index}
       onRigSelect={selectRig}
+      showGuides={showGuides}
+      onShowGuidesChange={setShowGuides}
     />
   )
   return variant === "inline" ? (
