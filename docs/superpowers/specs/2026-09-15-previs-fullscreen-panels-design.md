@@ -253,4 +253,6 @@ export const SIDEBAR_RAIL_WIDTH_PX = 44
 
 **人工浏览器验收**（spec §9 十项）：PENDING —— 需 `pnpm exec next dev -p 3001` 后人工逐项确认（无组件测试环境，布局/折叠/滚入视野均为 DOM 行为）。
 
-**已知门禁外偏差**：`previs-blocking-editor.tsx` 的 `:1025` / `:1033` 触发 2 处 `react-hooks/set-state-in-effect`（eslint 非本计划门禁，本文件在本次改动前即未通过 lint）。两处 effect 均为 spec §3.3 / §3.4 刻意设计的「按 key 变化推状态」，非疏漏；实现方未擅自添加未授权的规则抑制注释。此处单独记录，以免后续 lint 清理误判为意外引入。
+**终审修复波后复验**：`tsc --noEmit` 0 errors / `pnpm test` 126 passed / 10 files / `pnpm build` 全绿，与上表一致。
+
+**已知门禁外偏差**：`previs-blocking-editor.tsx` 的 `:1026` / `:1034` 触发 2 处 `react-hooks/set-state-in-effect`（eslint 非本计划门禁，本文件在本次改动前即未通过 lint）。两处 effect 均为 spec §3.3 / §3.4 刻意设计的「按 key 变化推状态」，非疏漏；实现方未擅自添加未授权的规则抑制注释。此处单独记录，以免后续 lint 清理误判为意外引入。
