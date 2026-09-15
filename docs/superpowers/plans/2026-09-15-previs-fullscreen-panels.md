@@ -666,7 +666,78 @@ import {
       </div>
 ```
 
-- [ ] **Step 6: 换容器 + 删左栏**
+- [ ] **Step 6: 去除面板内与分区标题重复的标题行**
+
+分区标题已承载面板标题，四处面板内标题随之变重复。保留操作性提示文案，只去掉重复的标题词。
+
+**(a) `itemsEl`（`:850-852`）** — 旧：
+
+```tsx
+      {variant === "fullscreen" && (
+        <p className="text-[11px] font-medium text-muted-foreground">布景项（点击选中，方向键微调）</p>
+      )}
+```
+
+新：
+
+```tsx
+      {variant === "fullscreen" && (
+        <p className="text-[10px] text-muted-foreground">点击选中，方向键微调</p>
+      )}
+```
+
+**(b) `cameraEl`（`:1018-1020`）** — 旧：
+
+```tsx
+      <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+        <CameraIcon className="size-3" /> 机位参数 · {rigLabel(shotIndex)}（视锥随目标实时变化）
+      </p>
+```
+
+新：
+
+```tsx
+      <p className="mb-1.5 text-[10px] text-muted-foreground">视锥随目标实时变化</p>
+```
+
+（`CameraIcon` 仍被 pill 的「设当前视角为机位」使用，import 保留。）
+
+**(c) `poseEl`（`:914-917`）** — 旧：
+
+```tsx
+      <div className="rounded-md border border-border/60 p-2">
+        <p className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+          <ClipboardIcon className="size-3" /> 角色姿态 · {selectedItem.name}
+        </p>
+        <div className="flex gap-2">
+```
+
+新：
+
+```tsx
+      <div className="flex flex-col">
+        <div className="flex gap-2">
+```
+
+（`ClipboardIcon` 仍被「粘贴」按钮使用，import 保留。）
+
+**(d) `TransformGroup`（`:269-274`）** — 旧：
+
+```tsx
+      <p className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+        变换 · {item.name}
+```
+
+新：
+
+```tsx
+      <p className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+        {item.name}
+```
+
+（该行其余部分——`item.kind` 徽标与 `</p>`——不动。）
+
+- [ ] **Step 7: 换容器 + 删左栏**
 
 `:1139-1146`。旧：
 
@@ -688,7 +759,7 @@ import {
           <div className="flex min-h-0 flex-1 flex-col gap-3">
 ```
 
-- [ ] **Step 7: 右栏换成侧栏 / 图标条**
+- [ ] **Step 8: 右栏换成侧栏 / 图标条**
 
 `:1324-1331`。旧：
 
@@ -827,9 +898,9 @@ import {
         </div>
 ```
 
-注意 `itemsEl` 自带 `布景项（点击选中，方向键微调）` 引导文案（`:851`），与分区标题重复——保留不动（内部卡片标题一律保留，与 `TransformGroup` 的「变换 · 名字」一致，避免文案返工）。
+（面板内重复标题已在 Step 6 去除；此处只做搬运，不再改文案。）
 
-- [ ] **Step 8: `PrevisBlockingEditor` 持状态并下传**
+- [ ] **Step 9: `PrevisBlockingEditor` 持状态并下传**
 
 在 `showGuides` 状态之后追加：
 
@@ -847,7 +918,7 @@ import {
       onSidebarCollapsedChange={setSidebarCollapsed}
 ```
 
-- [ ] **Step 9: 更新全屏壳文档注释**
+- [ ] **Step 10: 更新全屏壳文档注释**
 
 `src/components/projects/previs-fullscreen-editor.tsx:11-15`。旧：
 
@@ -869,12 +940,12 @@ import {
  */
 ```
 
-- [ ] **Step 10: 门禁**
+- [ ] **Step 11: 门禁**
 
 Run: `pnpm exec tsc --noEmit && pnpm test && pnpm build`
 Expected: tsc 0 errors（若报 `'SidebarSection' is declared but never used` 说明 Step 4 未生效）；vitest 126 passed；build 全绿
 
-- [ ] **Step 11: 提交**
+- [ ] **Step 12: 提交**
 
 ```bash
 git add src/components/projects/previs-blocking-editor.tsx src/components/projects/previs-fullscreen-editor.tsx
