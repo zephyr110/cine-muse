@@ -163,9 +163,6 @@ function FrameOverlay({ aspect, showGuides }: { aspect: MapAspect; showGuides: b
   )
 }
 
-/** 画幅 → 宽高比数值（3D 画布 letterbox 与视口相机锁定共用） */
-const ASPECT_RATIO: Record<MapAspect, number> = { "16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1 }
-
 /** 新增角色的 8 色盘轮转：取未被现有角色显式占用（kind=character 且带 color）的第一色 */
 const nextPaletteColor = (items: BlockingItem[]): string => {
   const used = new Set(
@@ -365,8 +362,8 @@ function RailButton({
   )
 }
 
-/** 侧栏分区（受控手风琴）：允许多个同时展开；折叠 = 内容卸载。
- *  例外：角色姿态内部 11 组滑杆是非受控 <details>，其展开状态随卸载丢失（滑杆值本身在 store，无数据损失）。 */
+/** 侧栏分区（受控手风琴）：允许多个同时展开；折叠用 grid-rows 过渡做高度动画。
+ *  内容保持挂载 → 角色姿态内部 11 组非受控 <details> 的展开态不再随折叠丢失。 */
 function SidebarSection({
   label, badge, open, onToggle, sectionRef, children,
 }: {
@@ -396,7 +393,20 @@ function SidebarSection({
           </span>
         )}
       </button>
-      {open && <div className="px-3 pb-3">{children}</div>}
+      {/* 展开/收起动画：grid-template-rows 0fr↔1fr —— 高度无需测量即可过渡。
+          内容保持挂载（内部非受控 <details> 展开态、输入焦点不再随折叠丢失）；
+          收起时 inert → 退出可聚焦序列与无障碍树，等价于原先的「卸载」。 */}
+      <div
+        inert={!open}
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
+          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+        )}
+      >
+        <div className="overflow-hidden">
+          <div className="px-3 pb-3">{children}</div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -450,13 +460,10 @@ function BlockingShotEditor({
   const [aspect, setAspect] = React.useState<MapAspect>("16:9")
   const [orbits, setOrbits] = React.useState<OrbitPreview[]>([])
   const [clipboard, setClipboard] = React.useState<BlockingItem | null>(null)
-  /** 画幅 letterbox 适配尺寸：舞台容器内按所选比例的最大内接区（3D 画布框） */
-  const [fit, setFit] = React.useState<{ w: number; h: number } | null>(null)
   const itemsRef = React.useRef(items)
   itemsRef.current = items
   const viewportRef = React.useRef<PrevisViewportHandle | null>(null)
   const svgBoxRef = React.useRef<HTMLDivElement | null>(null)
-  const stageBoxRef = React.useRef<HTMLDivElement | null>(null)
   /** 侧栏展开的分区集合：本地即可——组件按 shot 重建时选择同时重置，自动展开会重新打开（spec §5） */
   const [openSections, setOpenSections] = React.useState<ReadonlySet<SidebarSection>>(DEFAULT_OPEN_SECTIONS)
   const sectionRefs = React.useRef<Partial<Record<SidebarSection, HTMLDivElement | null>>>({})
@@ -482,31 +489,13 @@ function BlockingShotEditor({
     }
   }, [propsKey, shot])
 
-  // 画幅 letterbox：舞台容器实测 → 按所选比例的最大内接区（fullscreen 3D 画布）
-  React.useEffect(() => {
-    if (variant !== "fullscreen") return
-    const el = stageBoxRef.current
-    if (!el) return
-    const update = () => {
-      const cw = el.clientWidth
-      const ch = el.clientHeight
-      if (cw === 0 || ch === 0) return
-      const ratio = ASPECT_RATIO[aspect]
-      const w = Math.min(cw, Math.floor(ch * ratio))
-      const h = Math.floor(w / ratio)
-      setFit((prev) => (prev && prev.w === w && prev.h === h ? prev : { w, h }))
-    }
-    update()
-    const ro = new ResizeObserver(update)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [aspect, variant])
-
-  // 视口相机比例锁定（与画布 letterbox 一致 → 几何不畸变；导出画幅同源）
+  // 3D 画布铺满舞台容器：相机比例 = 容器比例（几何不畸变），不再按画幅 letterbox。
+  // 导出画幅改由 FrameOverlay 的比例框 + 外围遮罩标示——导出本身走离屏渲染（captureMaps），
+  // 与此处的视口比例无关，故「所见」与「所得」仍一致。
   React.useEffect(() => {
     if (variant !== "fullscreen" || centerTab !== "view3d") return
-    viewportRef.current?.setViewAspect(ASPECT_RATIO[aspect])
-  }, [aspect, centerTab, variant])
+    viewportRef.current?.setViewAspect(null)
+  }, [centerTab, variant])
 
   /** 实际生效的变换模式：选中机位 rig 时缩放无效（spec §4.2）→ 派生回退 translate。
    *  派生而非 effect 同步：无额外渲染，工具条高亮与视口 gizmo 模式始终一致；
@@ -1323,15 +1312,9 @@ function BlockingShotEditor({
         <div className="flex h-full min-h-0 gap-3">
           <div className="flex min-h-0 flex-1 flex-col gap-3">
             {centerTabsEl}
-            <div
-              ref={stageBoxRef}
-              className="relative min-h-0 flex-1 overflow-hidden rounded-md border bg-zinc-200 dark:bg-zinc-800"
-            >
+            <div className="relative min-h-0 flex-1 overflow-hidden rounded-md border bg-zinc-200 dark:bg-zinc-800">
               {centerTab === "view3d" ? (
-                <div
-                  className="absolute inset-0 m-auto"
-                  style={{ width: fit?.w ?? "100%", height: fit?.h ?? "100%" }}
-                >
+                <div className="absolute inset-0">
                   <PrevisViewport
                     ref={viewportRef}
                     items={items}
@@ -1507,11 +1490,20 @@ function BlockingShotEditor({
               </div>
             )}
           </div>
-          {sidebarCollapsed ? (
-            /* 收起态：44px 图标条——分区图标常驻（不适用时置灰而非隐藏，避免位置跳动），撤销/重做常驻底部 */
-            <aside
+          {/* 收起/展开共用同一个 aside：宽度过渡 44px ↔ 300px，两侧内容交叉淡入淡出；
+              内层宽度固定 → 收起时被裁切（而非重排压扁）；inert 让隐藏侧退出可聚焦序列。 */}
+          <aside
+            style={{ width: sidebarCollapsed ? SIDEBAR_RAIL_WIDTH_PX : SIDEBAR_WIDTH_PX }}
+            className="relative shrink-0 overflow-hidden rounded-md border bg-muted/20 transition-[width] duration-200 ease-out motion-reduce:transition-none"
+          >
+            {/* 收起态：44px 图标条——分区图标常驻（不适用时置灰而非隐藏，避免位置跳动），撤销/重做常驻底部 */}
+            <div
+              inert={!sidebarCollapsed}
               style={{ width: SIDEBAR_RAIL_WIDTH_PX }}
-              className="flex shrink-0 flex-col items-center gap-0.5 rounded-md border bg-muted/20 py-2"
+              className={cn(
+                "absolute inset-y-0 right-0 flex flex-col items-center gap-0.5 py-2 transition-opacity duration-200 motion-reduce:transition-none",
+                sidebarCollapsed ? "opacity-100" : "pointer-events-none opacity-0",
+              )}
             >
               <RailButton label="展开侧栏" onClick={() => onSidebarCollapsedChange(false)}>
                 <PanelRightOpenIcon className="size-4" />
@@ -1543,12 +1535,15 @@ function BlockingShotEditor({
                   <Redo2Icon className="size-4" />
                 </RailButton>
               </div>
-            </aside>
-          ) : (
-            /* 展开态：头部 + 分区滚动区 + 固定底栏（底栏不随内容滚动） */
-            <aside
+            </div>
+            {/* 展开态：头部 + 分区滚动区 + 固定底栏（底栏不随内容滚动） */}
+            <div
+              inert={sidebarCollapsed}
               style={{ width: SIDEBAR_WIDTH_PX }}
-              className="flex shrink-0 flex-col rounded-md border bg-muted/20"
+              className={cn(
+                "absolute inset-y-0 left-0 flex flex-col bg-muted/20 transition-opacity duration-200 motion-reduce:transition-none",
+                sidebarCollapsed ? "pointer-events-none opacity-0" : "opacity-100",
+              )}
             >
               <header className="flex h-8 shrink-0 items-center gap-1.5 border-b px-3">
                 <SlidersHorizontalIcon className="size-3.5 text-muted-foreground" />
@@ -1623,8 +1618,8 @@ function BlockingShotEditor({
                 </div>
                 {actionsEl}
               </footer>
-            </aside>
-          )}
+            </div>
+          </aside>
         </div>
       </>
     )
