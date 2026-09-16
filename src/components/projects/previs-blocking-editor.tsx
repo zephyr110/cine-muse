@@ -29,6 +29,7 @@ import { toast } from "@/components/ui/toast"
 import { useApp } from "@/lib/store"
 import { injectMarkerIds, renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { isPrevisArtifact } from "@/lib/engine/previs-types"
+import { nextCharacterPosition, nextPastePosition } from "@/lib/engine/previs-placement"
 import {
   DEFAULT_OPEN_SECTIONS,
   SIDEBAR_RAIL_WIDTH_PX,
@@ -66,10 +67,7 @@ const SVG_W = 480
 const SVG_H = 270
 const PX_PER_UNIT = 48
 
-/** 新增角色网格落位范围（仅 addCharacter 的自动摆位使用）：用户提交/拖拽已不再钳制（spec §4.4） */
-const X_RANGE = { min: -SVG_W / 2 / PX_PER_UNIT, max: SVG_W / 2 / PX_PER_UNIT } // [-5, 5]
-const Z_RANGE = { min: 1 - SVG_H / 2 / PX_PER_UNIT, max: 1 + SVG_H / 2 / PX_PER_UNIT } // [-1.8125, 3.8125]
-/** 机位/FOV 仍按范围钳制（相机参数非自由摆放语义） */
+/** 机位/FOV 仍按范围钳制（相机参数非自由摆放语义）；图元落位不钳制（spec §4.4，摆位收敛见 previs-placement） */
 const CAM_RANGE = { min: -20, max: 20 }
 const FOV_RANGE = { min: 5, max: 150 }
 
@@ -382,7 +380,10 @@ function SidebarSection({
         type="button"
         aria-expanded={open}
         onClick={onToggle}
-        className="flex w-full items-center gap-1 px-2 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-foreground/5"
+        className={cn(
+          "flex w-full items-center gap-1 px-3 py-1.5 text-[11px] font-medium transition-colors hover:bg-foreground/5",
+          open ? "bg-foreground/5 text-foreground" : "text-muted-foreground",
+        )}
       >
         <ChevronRightIcon className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
         {label}
@@ -392,7 +393,7 @@ function SidebarSection({
           </span>
         )}
       </button>
-      {open && <div className="px-2 pb-2">{children}</div>}
+      {open && <div className="px-3 pb-3">{children}</div>}
     </div>
   )
 }
@@ -745,17 +746,15 @@ function BlockingShotEditor({
     },
   ) => handleTransform(id, patch, true)
 
-  /** 添加角色：色盘轮转 + 网格落位（与默认布景同区、避免互相重叠） + 自动选中 */
+  /** 添加角色：色盘轮转 + 网格落位（取第一个空闲槽，不与已有角色重叠） + 自动选中 */
   const addCharacter = (bodyType: string) => {
     const chars = items.filter((b) => b.kind === "character")
     const id = randomItemId("ch")
-    const col = (chars.length % 4) - 1.5 // -1.5 -0.5 0.5 1.5
-    const row = Math.floor(chars.length / 4)
     const item: BlockingItem = {
       id,
       kind: "character",
       name: `角色${String(chars.length + 1).padStart(2, "0")}`,
-      position: [round2(clamp(col * 1.25, X_RANGE)), 0, round2(clamp(1 + row * 0.8, Z_RANGE))],
+      position: nextCharacterPosition(items),
       rotation: [0, 0, 0],
       scale: [1, 1, 1],
       color: nextPaletteColor(items),
@@ -797,8 +796,8 @@ function BlockingShotEditor({
       ...source,
       id: randomItemId("c"),
       name: `${source.name} 副本`,
-      // v2：粘贴保留源 y（几何中心/脚底语义）；x/z 沿用旧的错位 +1 惯例（不钳制，spec §4.4）
-      position: [round2(source.position[0] + 1), source.position[1], round2(source.position[2] + 1)],
+      // v2：粘贴保留源 y（几何中心/脚底语义）；x/z 沿用错位 +1 惯例，已被占用时继续外推（不钳制，spec §4.4）
+      position: nextPastePosition(items, source),
       rotation: [...source.rotation] as [number, number, number],
       scale: [...source.scale] as [number, number, number],
     }
@@ -880,29 +879,31 @@ function BlockingShotEditor({
 
   // 中央工具栏：视图/三图切换 + 导演/机位视角分段开关（画幅/环绕/截图等已移入画布 pill 工具条）
   const centerTabsEl = (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {(
-        [
-          ["view3d", "3D 视图"],
-          ["preview", "布景"],
-          ["depth", "深度"],
-          ["edge", "边缘"],
-        ] as const
-      ).map(([key, label]) => (
-        <button
-          key={key}
-          type="button"
-          onClick={() => setCenterTab(key)}
-          className={cn(
-            "rounded-md border px-2 py-1 text-xs transition-colors",
-            centerTab === key
-              ? "border-primary/60 bg-primary/10 font-medium"
-              : "border-border/60 text-muted-foreground hover:border-primary/30",
-          )}
-        >
-          {label}
-        </button>
-      ))}
+    <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-2 py-1.5">
+      <div className="flex items-center rounded-md border border-border bg-muted/40 p-0.5 text-xs">
+        {(
+          [
+            ["view3d", "3D 视图"],
+            ["preview", "布景"],
+            ["depth", "深度"],
+            ["edge", "边缘"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setCenterTab(key)}
+            className={cn(
+              "rounded px-2 py-0.5 transition-colors",
+              centerTab === key
+                ? "bg-background font-medium shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       {variant === "fullscreen" && (
         <>
           <span className="mx-1 h-4 w-px bg-border" />
@@ -916,7 +917,7 @@ function BlockingShotEditor({
               className={cn(
                 "flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors",
                 showGuides
-                  ? "border-primary/60 bg-primary/10 font-medium"
+                  ? "border-primary bg-primary font-medium text-primary-foreground"
                   : "border-border/60 text-muted-foreground hover:border-primary/30",
               )}
             >
@@ -1201,7 +1202,7 @@ function BlockingShotEditor({
       <Button
         size="sm"
         variant="outline"
-        className="gap-1 text-xs"
+        className="flex-1 gap-1 text-xs"
         disabled={state.previsUndo.past.length === 0}
         onClick={undo}
       >
@@ -1210,7 +1211,7 @@ function BlockingShotEditor({
       <Button
         size="sm"
         variant="outline"
-        className="gap-1 text-xs"
+        className="flex-1 gap-1 text-xs"
         disabled={state.previsUndo.future.length === 0}
         onClick={redo}
       >
@@ -1225,7 +1226,7 @@ function BlockingShotEditor({
         <Button
           size="sm"
           variant="outline"
-          className="gap-1 text-xs"
+          className="flex-1 gap-1 text-xs"
           disabled={!selectedItem}
           onClick={copySelected}
         >
@@ -1234,7 +1235,7 @@ function BlockingShotEditor({
         <Button
           size="sm"
           variant="outline"
-          className="gap-1 text-xs"
+          className="flex-1 gap-1 text-xs"
           disabled={!clipboard}
           onClick={pasteClipboard}
         >
@@ -1286,7 +1287,7 @@ function BlockingShotEditor({
             {centerTabsEl}
             <div
               ref={stageBoxRef}
-              className="relative min-h-0 flex-1 overflow-hidden rounded-md border bg-background"
+              className="relative min-h-0 flex-1 overflow-hidden rounded-md border bg-zinc-200 dark:bg-zinc-800"
             >
               {centerTab === "view3d" ? (
                 <div
@@ -1504,9 +1505,9 @@ function BlockingShotEditor({
               style={{ width: SIDEBAR_WIDTH_PX }}
               className="flex shrink-0 flex-col rounded-md border bg-muted/20"
             >
-              <header className="flex h-8 shrink-0 items-center gap-1.5 border-b px-2">
+              <header className="flex h-8 shrink-0 items-center gap-1.5 border-b px-3">
                 <SlidersHorizontalIcon className="size-3.5 text-muted-foreground" />
-                <span className="text-[11px] font-medium text-muted-foreground">预演控制</span>
+                <span className="text-xs font-semibold text-foreground">预演控制</span>
                 <button
                   type="button"
                   title="收起侧栏"
@@ -1569,8 +1570,9 @@ function BlockingShotEditor({
                   </SidebarSection>
                 )}
               </div>
-              <footer className="flex shrink-0 flex-col gap-2 border-t p-2">
-                <div className="flex flex-wrap gap-1.5">
+              <footer className="flex shrink-0 flex-col gap-2 border-t px-3 py-2.5">
+                {/* 2×2 定栏：撤销/重做/复制/粘贴 四个同宽按钮；原先 flex-wrap 会 3+1 参差换行 */}
+                <div className="grid grid-cols-2 gap-1.5">
                   {undoRedoEl}
                   {copyPasteEl}
                 </div>

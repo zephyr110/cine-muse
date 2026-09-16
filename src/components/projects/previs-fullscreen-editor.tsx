@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Maximize2Icon, XIcon } from "lucide-react"
+import { XIcon } from "lucide-react"
 
 import type { WorkflowStage } from "@/lib/types"
 import { Button } from "@/components/ui/button"
@@ -34,7 +34,6 @@ export function PrevisFullscreenEditor({
       >
         {/* 顶栏：身份信息 + 退出 */}
         <header className="flex h-12 shrink-0 items-center gap-2.5 border-b bg-popover px-4">
-          <Maximize2Icon className="size-4 text-muted-foreground" />
           <DialogTitle className="text-sm font-semibold">空间预演台 · 全屏编辑</DialogTitle>
           <span className="truncate text-xs text-muted-foreground">{stage.title}</span>
           <div className="ml-auto" />

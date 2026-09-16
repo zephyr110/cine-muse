@@ -70,11 +70,32 @@ const CLICK_SLOP = 5
 const HOME_VIEW = { position: new THREE.Vector3(8, 8, 10), target: new THREE.Vector3(0, 1, 0), fov: 45 }
 /** 未接线 shots prop 时的稳定空数组（防每渲染新 [] 触发 effect） */
 const EMPTY_SHOTS: PrevisShot[] = []
+
+/**
+ * 右上角轴向快照卡片（仅 director）：相机置于 target + 轴×当前视距。
+ * 轴色沿用 3D 工具惯例（X 红 / Y 绿 / Z 蓝）；**符号与轴字母分色**——正负是独立于
+ * 「哪根轴」的第二条信息，正负同色会在同色轴内不可辨。
+ * 浅色底上 rose/emerald/sky 的 -400 档不足 4.5:1（10px 字不适用大字号豁免），故 light 用 -700。
+ */
+const AXIS_VIEWS: Array<{
+  axis: [number, number, number]
+  sign: string
+  letter: string
+  tint: string
+  label: string
+}> = [
+  { axis: [1, 0, 0], sign: "+", letter: "X", tint: "text-rose-700 dark:text-rose-400", label: "+X 视图" },
+  { axis: [-1, 0, 0], sign: "−", letter: "X", tint: "text-rose-700 dark:text-rose-400", label: "−X 视图" },
+  { axis: [0, 1, 0], sign: "+", letter: "Y", tint: "text-emerald-700 dark:text-emerald-400", label: "+Y 视图（俯视）" },
+  { axis: [0, -1, 0], sign: "−", letter: "Y", tint: "text-emerald-700 dark:text-emerald-400", label: "−Y 视图（仰视）" },
+  { axis: [0, 0, 1], sign: "+", letter: "Z", tint: "text-sky-700 dark:text-sky-400", label: "+Z 视图" },
+  { axis: [0, 0, -1], sign: "−", letter: "Z", tint: "text-sky-700 dark:text-sky-400", label: "−Z 视图" },
+]
 /** 机位标签锚点：rig 原点上方偏移（世界坐标；spec §4.3 保留 +0.55） */
 const RIG_LABEL_OFFSET_Y = 0.55
 
 /** 从命中对象向上找携带 userData.itemId 的祖先（rig/图元 均可） */
-function ownerId(obj: THREE.Object3D | null): string | null {
+export function ownerId(obj: THREE.Object3D | null): string | null {
   let cur: THREE.Object3D | null = obj
   while (cur) {
     const id = cur.userData.itemId as string | undefined
@@ -157,7 +178,7 @@ function buildMesh(item: BlockingItem): THREE.Object3D {
 
 /** 机位 rig：0.35 缩比线框摄像机（盒体 12 线 + 镜头倒锥 + 后部双圆盘 + 视锥远帧）+ 隐形命中盒。
  *  组原点 = 摄像机位置；局部 +Z = 机位前方（指向 target，朝向由 getRigQuaternion 给出）——与 REF 同约定。 */
-function buildCameraRig(): THREE.Group {
+export function buildCameraRig(): THREE.Group {
   const g = new THREE.Group()
   const addLine = (pts: WirePoint[]) => {
     const geo = new THREE.BufferGeometry().setFromPoints(pts.map((p) => new THREE.Vector3(...p)))
@@ -165,6 +186,12 @@ function buildCameraRig(): THREE.Group {
       geo,
       new THREE.LineBasicMaterial({ color: CAM_LINE_COLOR, transparent: true, opacity: CAM_LINE_OPACITY }),
     )
+    // 线框只是视觉：必须退出拾取。three 的 Raycaster.params.Line.threshold 默认 1 个世界单位，
+    // 而这里的线没有缩放（0.35 缩比烘在几何坐标里）→ 每台机位的线框都是一枚半径约 1 单位的
+    // 「点击黑洞」（实测横向 2.5 单位外仍能截获），又因 itemId 挂在 rig 的 Group 上、线框经
+    // 祖先回溯解析成 __camera__，按距离排序会压过它后面的角色，表现为「角色鼠标点不中」。
+    // 拾取代理是下面的隐形命中盒（cameraHitArea），设计如此。
+    l.raycast = () => {}
     g.add(l)
   }
   for (const pts of cameraBodyWireframeLines()) addLine(pts)
@@ -1156,10 +1183,6 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       snapViewToAxis,
     }))
 
-    // —— 轴向视图 gizmo（DOM，右上角；仅 director 模式显示） ——
-    const axisBtn =
-      "pointer-events-auto rounded px-1.5 text-[10px] font-bold leading-5 transition-colors hover:bg-border/60"
-
     return (
       <div
         ref={hostRef}
@@ -1171,64 +1194,27 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         onPointerLeave={abortArmedGesture}
       >
         {viewMode === "director" && (
-          <div className="pointer-events-none absolute right-2 top-2 z-10 flex flex-col items-center gap-0.5 rounded-md border border-border/60 bg-background/70 p-0.5 shadow-sm backdrop-blur-sm">
-            <button
-              type="button"
-              aria-label="切换到 Y 正向视图"
-              title="+Y 视图"
-              className={`${axisBtn} text-emerald-400`}
-              onClick={() => snapViewToAxis([0, 1, 0])}
-            >
-              Y
-            </button>
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                aria-label="切换到 X 反向视图"
-                title="−X 视图"
-                className={`${axisBtn} text-rose-400`}
-                onClick={() => snapViewToAxis([-1, 0, 0])}
-              >
-                X−
-              </button>
-              <span className="inline-block size-1.5 rounded-full bg-zinc-400" aria-hidden />
-              <button
-                type="button"
-                aria-label="切换到 X 正向视图"
-                title="+X 视图"
-                className={`${axisBtn} text-rose-400`}
-                onClick={() => snapViewToAxis([1, 0, 0])}
-              >
-                X
-              </button>
+          // 一枚轴一行（正左负右），分组即语义：原来 +Y 被 X 那行隔开、Z 正负塞在底部，
+          // 六颗按钮读起来是一列无结构的字母。容器仍 pointer-events-none，只有按钮可点。
+          <div className="pointer-events-none absolute right-2 top-2 z-10 w-16 rounded-lg border border-border/60 bg-background/70 p-1 shadow-md backdrop-blur-md">
+            <div className="pb-0.5 text-center text-[10px] leading-none font-medium text-muted-foreground">
+              轴向视图
             </div>
-            <button
-              type="button"
-              aria-label="切换到 Y 反向视图"
-              title="−Y 视图"
-              className={`${axisBtn} text-emerald-400`}
-              onClick={() => snapViewToAxis([0, -1, 0])}
-            >
-              Y−
-            </button>
-            <button
-              type="button"
-              aria-label="切换到 Z 正向视图"
-              title="+Z 视图"
-              className={`${axisBtn} text-sky-400`}
-              onClick={() => snapViewToAxis([0, 0, 1])}
-            >
-              Z
-            </button>
-            <button
-              type="button"
-              aria-label="切换到 Z 反向视图"
-              title="−Z 视图"
-              className={`${axisBtn} text-sky-400`}
-              onClick={() => snapViewToAxis([0, 0, -1])}
-            >
-              Z−
-            </button>
+            <div className="grid grid-cols-2 gap-0.5">
+              {AXIS_VIEWS.map((v) => (
+                <button
+                  key={v.label}
+                  type="button"
+                  aria-label={`切换到 ${v.label}`}
+                  title={v.label}
+                  className="pointer-events-auto flex h-6 items-center justify-center gap-px rounded-md text-[11px] leading-none font-semibold text-muted-foreground transition-colors hover:bg-foreground/10"
+                  onClick={() => snapViewToAxis(v.axis)}
+                >
+                  <span>{v.sign}</span>
+                  <span className={v.tint}>{v.letter}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
