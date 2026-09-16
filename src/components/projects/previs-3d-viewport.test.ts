@@ -13,7 +13,8 @@
 import { describe, expect, it } from "vitest"
 import * as THREE from "three"
 
-import { buildCameraRig, ownerId } from "./previs-3d-viewport"
+import { lightOwnerId, parseLightOwnerId } from "@/lib/engine/previs-light"
+import { buildCameraRig, buildLightRig, ownerId } from "./previs-3d-viewport"
 
 /** 默认导演视角（与视口 HOME_VIEW 同值） */
 const HOME = { position: new THREE.Vector3(8, 8, 10), target: new THREE.Vector3(0, 1, 0), fov: 45 }
@@ -111,5 +112,80 @@ describe("机位 rig 与角色拾取", () => {
     const rig = makeRigAt(3, 1, 0)
     // 瞄准机位自身位置
     expect(pickId(sceneWith(rig), rig, new THREE.Vector3(3, 1, 0))).toBe("__camera__")
+  })
+})
+
+// —— 光源 rig 走的是同一套拾取代理约定：线框退出拾取、命中盒带 `__light__:<id>` 哨兵 ——
+//   注意光源命中盒只有 0.52 见方（比机位的还小），所以「挡不挡角色」的边界比机位更近。
+function makeLightRigAt(x: number, y: number, z: number, id: string): THREE.Group {
+  const rig = buildLightRig()
+  rig.position.set(x, y, z)
+  rig.userData.itemId = lightOwnerId(id)
+  return rig
+}
+
+/** 复现 pickAt：光源 rig 也进拾取目标集（director 态） */
+function pickIdWithLight(
+  scene: THREE.Scene,
+  lightRig: THREE.Group,
+  worldPoint: THREE.Vector3,
+): string | null {
+  const camera = new THREE.PerspectiveCamera(HOME.fov, 16 / 9, 0.1, 1000)
+  camera.position.copy(HOME.position)
+  camera.lookAt(HOME.target)
+  camera.updateMatrixWorld(true)
+  scene.updateMatrixWorld(true)
+
+  const ndc = worldPoint.clone().project(camera)
+  const raycaster = new THREE.Raycaster()
+  raycaster.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), camera)
+
+  const targets: THREE.Object3D[] = []
+  scene.traverse((o) => {
+    if (o.userData.itemId && o.userData.itemId !== "__camera__") targets.push(o)
+  })
+  targets.push(lightRig)
+
+  const hit = raycaster.intersectObjects(targets, true).find((h) => ownerId(h.object))
+  return hit ? ownerId(hit.object) : null
+}
+
+describe("光源 rig 与角色拾取", () => {
+  it("光源不在视线上（角色正后方）时，点角色选中角色", () => {
+    const char = makeCharacter("ch1")
+    const rig = makeLightRigAt(-2, 1, -2, "lt1")
+    expect(pickIdWithLight(sceneWith(char, rig), rig, AIM)).toBe("ch1")
+  })
+
+  it("★ 光源在角色侧向 1.0 处，角色仍可点选（命中盒只有 0.52 见方）", () => {
+    const char = makeCharacter("ch1")
+    const rig = makeLightRigAt(1.0, 1.0, 0.5, "lt1")
+    expect(pickIdWithLight(sceneWith(char, rig), rig, AIM)).toBe("ch1")
+  })
+
+  it("光源的线框不产生任何射线命中（线框只是装饰）", () => {
+    const rig = makeLightRigAt(1.0, 1.0, 0.5, "lt1")
+    const camera = new THREE.PerspectiveCamera(HOME.fov, 16 / 9, 0.1, 1000)
+    camera.position.copy(HOME.position)
+    camera.lookAt(HOME.target)
+    camera.updateMatrixWorld(true)
+    rig.updateMatrixWorld(true)
+
+    const ndc = AIM.clone().project(camera)
+    const raycaster = new THREE.Raycaster()
+    raycaster.setFromCamera(new THREE.Vector2(ndc.x, ndc.y), camera)
+
+    const fromLines = raycaster
+      .intersectObjects([rig], true)
+      .filter((h) => (h.object as THREE.Line).isLine)
+    expect(fromLines).toHaveLength(0)
+  })
+
+  it("光源本体可点选，且哨兵能解析回光源 id", () => {
+    // 落在 HOME → AIM 视线上的位置（否则命中盒太小、瞄不准）
+    const rig = makeLightRigAt(2.5, 3.05, 3.125, "lt1")
+    const picked = pickIdWithLight(sceneWith(rig), rig, new THREE.Vector3(2.5, 3.05, 3.125))
+    expect(picked).toBe(lightOwnerId("lt1"))
+    expect(parseLightOwnerId(picked)).toBe("lt1")
   })
 })

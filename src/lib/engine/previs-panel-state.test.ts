@@ -13,8 +13,8 @@ import {
 } from "./previs-panel-state"
 
 describe("previs-panel-state", () => {
-  it("SIDEBAR_SECTIONS 为四分区，顺序即渲染顺序", () => {
-    expect(SIDEBAR_SECTIONS).toEqual(["camera", "items", "pose", "transform"])
+  it("SIDEBAR_SECTIONS 为五分区，顺序即渲染顺序（light 紧随 camera）", () => {
+    expect(SIDEBAR_SECTIONS).toEqual(["camera", "light", "items", "pose", "transform"])
   })
 
   it("默认展开集合恰为 机位 + 布景项", () => {
@@ -34,10 +34,23 @@ describe("previs-panel-state", () => {
     expect(applicableSections({ kind: "character" })).toEqual(["camera", "items", "pose", "transform"])
   })
 
+  it("applicableSections：光源分区仅该分镜已有光源时出现（无光源不占位）", () => {
+    expect(applicableSections(null, true)).toEqual(["camera", "light", "items"])
+    expect(applicableSections({ kind: "character" }, true)).toEqual([
+      "camera", "light", "items", "pose", "transform",
+    ])
+    expect(applicableSections({ kind: "prop" }, false)).not.toContain("light")
+  })
+
   it("sectionsForSelection：角色自动展开 姿态+变换，道具仅 变换，空选择为空", () => {
     expect(sectionsForSelection({ kind: "character" })).toEqual(["pose", "transform"])
     expect(sectionsForSelection({ kind: "prop" })).toEqual(["transform"])
     expect(sectionsForSelection(null)).toEqual([])
+  })
+
+  it("sectionsForSelection：有光源时自动展开光源分区（新增光源后面板自己露出来）", () => {
+    expect(sectionsForSelection(null, true)).toEqual(["light"])
+    expect(sectionsForSelection({ kind: "character" }, true)).toEqual(["light", "pose", "transform"])
   })
 
   it("toggleSection 往返回到原集合，且不改动入参", () => {

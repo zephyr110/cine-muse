@@ -21,6 +21,19 @@ function stateWithPrevis(rendered = true): AppState {
 const shotsOf = (state: AppState): PrevisShot[] =>
   (state.projects[0].stages[0].artifact as unknown as { shots: PrevisShot[] }).shots
 
+/** 多分镜 previs 状态：第 i 镜的机位 x = i（便于断言「删除后重编号 / 撤销还原」） */
+function multiShotState(count: number): AppState {
+  const base = stateWithPrevis()
+  const p = base.projects[0]
+  const stg = p.stages[0]
+  const shots = Array.from({ length: count }, (_, i) => ({
+    ...renderPrevisShot(makePrevisShot(i)),
+    camera: { position: [i, 2, 8] as [number, number, number], target: [0, 1, 0] as [number, number, number], fov: 45 },
+  }))
+  const artifact = { ...(stg.artifact as object), shots } as unknown as Artifact
+  return { ...base, projects: [{ ...p, stages: [{ ...stg, artifact }, ...p.stages.slice(1)] }] }
+}
+
 /** 构造 previs → video_gen 双环节项目（星尘余晖式 review/manual 场景）：previs 携带已渲染产物，video_gen 待启动 */
 function stateWithPrevisFlow(
   previsStatus: "waiting_approval" | "completed" | "approved",
@@ -266,6 +279,67 @@ describe("migrateAppState", () => {
     const undone = engineReducer(s2, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
     expect(shotsOf(undone)[0].blocking[0].position[0]).toBe(0)
     expect(shotsOf(undone)[0].camera.position).toEqual([0, 2, 8])
+  })
+
+  it("UPDATE_PREVIS_LIGHTS 写入光源且不重渲染三图（光源不进 2D 俯视投影）", () => {
+    const state = stateWithPrevis()
+    const p = state.projects[0]
+    const stg = p.stages[0]
+    const before = shotsOf(state)[0].previewSvg
+    const light = { id: "lt-1", name: "光源01", position: [6, 8, 4] as [number, number, number], target: [0, 0, 0] as [number, number, number], intensity: 1.2, castShadow: true }
+    const next = engineReducer(state, {
+      type: "UPDATE_PREVIS_LIGHTS", projectId: p.id, stageId: stg.id, shotIndex: 0, lights: [light],
+    })
+    expect(shotsOf(next)[0].lights).toEqual([light])
+    expect(shotsOf(next)[0].previewSvg).toBe(before) // 三图与光源无关，不该被重算
+  })
+
+  it("光源改动可撤销：回到「当时没有光源」", () => {
+    const state = stateWithPrevis()
+    const p = state.projects[0]
+    const stg = p.stages[0]
+    const s1 = engineReducer(state, {
+      type: "UPDATE_PREVIS_LIGHTS", projectId: p.id, stageId: stg.id, shotIndex: 0, commit: true,
+      lights: [{ id: "lt-1", name: "光源01", position: [6, 8, 4], target: [0, 0, 0], intensity: 1.2, castShadow: true }],
+    })
+    expect(shotsOf(s1)[0].lights).toHaveLength(1)
+    const undone = engineReducer(s1, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
+    expect(shotsOf(undone)[0].lights).toBeUndefined()
+    const redone = engineReducer(undone, { type: "PREVIS_REDO", projectId: p.id, stageId: stg.id })
+    expect(shotsOf(redone)[0].lights).toHaveLength(1)
+  })
+
+  it("DELETE_PREVIS_SHOT 删除该分镜并把剩余分镜重编号（shotIndex 连续）", () => {
+    const state = multiShotState(3)
+    const p = state.projects[0]
+    const stg = p.stages[0]
+    const next = engineReducer(state, { type: "DELETE_PREVIS_SHOT", projectId: p.id, stageId: stg.id, shotIndex: 1 })
+    const shots = shotsOf(next)
+    expect(shots).toHaveLength(2)
+    expect(shots.map((s) => s.shotIndex)).toEqual([0, 1])
+    expect(shots[0].camera.position[0]).toBe(0)
+    expect(shots[1].camera.position[0]).toBe(2) // 原第 3 镜顶上第 2 位
+  })
+
+  it("DELETE_PREVIS_SHOT 只剩一个分镜时拒绝（产物必须留镜）", () => {
+    const state = stateWithPrevis()
+    const p = state.projects[0]
+    const stg = p.stages[0]
+    const next = engineReducer(state, { type: "DELETE_PREVIS_SHOT", projectId: p.id, stageId: stg.id, shotIndex: 0 })
+    expect(shotsOf(next)).toHaveLength(1)
+    expect(next.previsUndo.past).toHaveLength(0) // 未删除 → 不占撤销栈
+  })
+
+  it("删除分镜可撤销：镜头数与被删镜头内容一并还原", () => {
+    const state = multiShotState(3)
+    const p = state.projects[0]
+    const stg = p.stages[0]
+    const s1 = engineReducer(state, { type: "DELETE_PREVIS_SHOT", projectId: p.id, stageId: stg.id, shotIndex: 1 })
+    const undone = engineReducer(s1, { type: "PREVIS_UNDO", projectId: p.id, stageId: stg.id })
+    const shots = shotsOf(undone)
+    expect(shots.map((s) => s.shotIndex)).toEqual([0, 1, 2])
+    expect(shots[1].camera.position[0]).toBe(1) // 被删镜头的机位回来了
+    expect(shots[1].previewSvg).toContain("<svg") // 按纯数据重建三图
   })
 
   it("跨 stage 的撤销不弹出其他 stage 的快照", () => {

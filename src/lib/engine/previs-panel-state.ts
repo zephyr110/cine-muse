@@ -4,8 +4,8 @@
  * 故把状态机与适用性判定收在此处单测；JSX 只做渲染。
  */
 
-/** 分区 id，顺序即侧栏渲染顺序（spec §3.1） */
-export const SIDEBAR_SECTIONS = ["camera", "items", "pose", "transform"] as const
+/** 分区 id，顺序即侧栏渲染顺序（spec §3.1）；light 紧随 camera——两者都是「拍摄要素」的 rig */
+export const SIDEBAR_SECTIONS = ["camera", "light", "items", "pose", "transform"] as const
 export type SidebarSection = (typeof SIDEBAR_SECTIONS)[number]
 
 /** 展开态侧栏宽度（px）——参与渲染，勿另写工具类以免漂移 */
@@ -19,18 +19,20 @@ export const DEFAULT_OPEN_SECTIONS: ReadonlySet<SidebarSection> = new Set(["came
 /** 结构类型而非 BlockingItem：纯模块不耦合应用类型；kind 实际含 character/prop/terrain */
 export type PanelSelection = { kind: string } | null
 
-/** 当前选择下适用的分区：机位/布景项恒在；角色姿态仅角色；变换仅任意选中项 */
-export function applicableSections(item: PanelSelection): SidebarSection[] {
+/** 当前情形下适用的分区：机位/布景项恒在；光源仅该分镜已有光源（空面板无意义，
+ *  添加入口在画布 pill 的添加菜单）；角色姿态仅角色；变换仅任意选中项 */
+export function applicableSections(item: PanelSelection, hasLights = false): SidebarSection[] {
   return SIDEBAR_SECTIONS.filter((id) => {
     if (id === "camera" || id === "items") return true
+    if (id === "light") return hasLights
     if (id === "pose") return item?.kind === "character"
     return item != null
   })
 }
 
 /** 选择变化时应自动展开的分区 = 适用分区中非默认展开的那些 */
-export function sectionsForSelection(item: PanelSelection): SidebarSection[] {
-  return applicableSections(item).filter((id) => !DEFAULT_OPEN_SECTIONS.has(id))
+export function sectionsForSelection(item: PanelSelection, hasLights = false): SidebarSection[] {
+  return applicableSections(item, hasLights).filter((id) => !DEFAULT_OPEN_SECTIONS.has(id))
 }
 
 /** 切换分区开合；返回新 Set，不改动入参 */

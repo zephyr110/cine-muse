@@ -16,7 +16,7 @@ import {
 import { produce } from "immer"
 
 import { createSeedState, uid } from "@/lib/engine/seed"
-import { isPrevisArtifact } from "@/lib/engine/previs-types"
+import { isPrevisArtifact, makePrevisShot } from "@/lib/engine/previs-types"
 import { BODY_TYPE_MIGRATION_V2, POSE_ID_MIGRATION_V2, POSE_PRESET_BY_ID } from "@/lib/engine/previs-poses"
 import { renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { MODE_LABEL } from "@/lib/types"
@@ -25,6 +25,7 @@ import type {
   AppState,
   BlockingItem,
   EngineEvent,
+  PrevisShot,
   PrevisUndoSnapshot,
   Project,
   WorkflowStage,
@@ -619,7 +620,8 @@ export function engineReducer(state: AppState, action: Action): AppState {
         pushEvent(draft, p, "mode_changed", `「${p.title}」干预模式已切换为 ${MODE_LABEL[action.mode]}`, action.now)
       })
 
-/** 预演撤销快照：仅取纯数据字段（blocking/camera/controls），排除 SVG/位图防膨胀 */
+/** 预演撤销快照：仅取纯数据字段（blocking/camera/lights/controls），排除 SVG/位图防膨胀。
+ *  含镜头数本身：删除分镜要能撤销（见 applyPrevisSnapshot 的整体重建语义）。 */
 function previsSnapshot(stage: WorkflowStage): PrevisUndoSnapshot | null {
   if (!isPrevisArtifact(stage.artifact)) return null
   return {
@@ -628,6 +630,7 @@ function previsSnapshot(stage: WorkflowStage): PrevisUndoSnapshot | null {
       shotIndex: s.shotIndex,
       blocking: s.blocking,
       camera: s.camera,
+      lights: s.lights,
     })),
   }
 }
@@ -643,16 +646,24 @@ function pushUndo(draft: AppState, snapshot: PrevisUndoSnapshot | null) {
   draft.previsUndo.future = []
 }
 
-/** 应用撤销快照到 stage（恢复 blocking/camera 并重渲染 SVG 三图） */
+/** 应用撤销快照到 stage：按快照**整体重建** shots 数组（blocking/camera/lights 恢复 + 三图重渲染）。
+ *  逐镜头就地改写只能表达「改内容」，删除分镜（镜头数变化）撤不回来——故按快照重建。
+ *  shotIndex 命中现有镜头时复用其位图（撤销不该把已导出的图换回 SVG）；
+ *  快照里有、现已不存在的镜头按纯数据重建（位图无从复得，「重新渲染」可再导出）。 */
 function applyPrevisSnapshot(draft: AppState, stage: WorkflowStage, snapshot: PrevisUndoSnapshot) {
   if (!isPrevisArtifact(stage.artifact)) return
-  for (const s of snapshot.shots) {
-    const shot = stage.artifact.shots.find((x) => x.shotIndex === s.shotIndex)
-    if (!shot) continue
-    shot.blocking = s.blocking
-    shot.camera = s.camera
-    Object.assign(shot, renderPrevisShot(shot))
-  }
+  const alive = new Map(stage.artifact.shots.map((s) => [s.shotIndex, s]))
+  const shots = snapshot.shots.map((snap) => {
+    const current = alive.get(snap.shotIndex)
+    const restored: PrevisShot = current
+      ? { ...current, blocking: snap.blocking, camera: snap.camera }
+      : { ...makePrevisShot(snap.shotIndex), blocking: snap.blocking, camera: snap.camera }
+    // 旧栈快照无 lights 字段 = 当时无光源，须删键（保留现值的 undefined 会骗过 `?? []` 之外的判空）
+    if (snap.lights) restored.lights = snap.lights
+    else delete restored.lights
+    return { ...restored, ...renderPrevisShot(restored) }
+  })
+  Object.assign(stage.artifact, { shots })
 }
 
     case "UPDATE_PREVIS_BLOCKING":
@@ -691,8 +702,36 @@ function applyPrevisSnapshot(draft: AppState, stage: WorkflowStage, snapshot: Pr
         Object.assign(shot, renderPrevisShot(shot))
       })
 
-    case "PREVIS_UNDO":
+    case "UPDATE_PREVIS_LIGHTS":
       return produce(state, (draft) => {
+        const p = draft.projects.find((x) => x.id === action.projectId)
+        const s = p?.stages.find((x) => x.id === action.stageId)
+        if (!p || !s || !isPrevisArtifact(s.artifact)) return
+        if (action.commit !== false) pushUndo(draft, previsSnapshot(s))
+        const shot = s.artifact.shots[action.shotIndex]
+        if (!shot) return
+        // 光源不进 2D 俯视投影（三图只画布景与机位），故不重渲染 SVG——与摆位/机位不同
+        shot.lights = action.lights
+      })
+
+    case "DELETE_PREVIS_SHOT":
+      return produce(state, (draft) => {
+        const p = draft.projects.find((x) => x.id === action.projectId)
+        const s = p?.stages.find((x) => x.id === action.stageId)
+        if (!p || !s || !isPrevisArtifact(s.artifact)) return
+        const shots = s.artifact.shots
+        // 至少保留一个分镜：previs 产物没有镜头就无从继续（下游 video_gen 取 shots[0] 注入参考）
+        if (shots.length <= 1) return
+        if (action.shotIndex < 0 || action.shotIndex >= shots.length) return
+        pushUndo(draft, previsSnapshot(s))
+        shots.splice(action.shotIndex, 1)
+        // 重编号保持连续：全应用一律按 shotIndex 寻址（机位标签 / 左栏列表 / 上游注入）
+        shots.forEach((shot, i) => {
+          shot.shotIndex = i
+        })
+      })
+
+    case "PREVIS_UNDO":      return produce(state, (draft) => {
         const p = draft.projects.find((x) => x.id === action.projectId)
         const s = p?.stages.find((x) => x.id === action.stageId)
         if (!p || !s) return

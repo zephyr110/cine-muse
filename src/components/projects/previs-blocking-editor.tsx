@@ -21,18 +21,36 @@ import {
   RotateCcwIcon,
   Scale3dIcon,
   SlidersHorizontalIcon,
+  SunIcon,
+  Trash2Icon,
   Undo2Icon,
   UserPlusIcon,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 
 import { toast } from "@/components/ui/toast"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { useApp } from "@/lib/store"
 import { injectMarkerIds, renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { isPrevisArtifact } from "@/lib/engine/previs-types"
 import { nextCharacterPosition, nextPastePosition } from "@/lib/engine/previs-placement"
 import { alignBottoms } from "@/lib/engine/previs-arrange"
 import { primaryId, pruneSelection, selectOnly, toggleSelection } from "@/lib/engine/previs-selection"
+import {
+  LIGHT_INTENSITY_RANGE,
+  clampLightIntensity,
+  makeLight,
+  type PrevisLightPose,
+} from "@/lib/engine/previs-light"
 import {
   DEFAULT_OPEN_SECTIONS,
   SIDEBAR_RAIL_WIDTH_PX,
@@ -51,7 +69,7 @@ import {
   POSE_PRESET_BY_ID,
 } from "@/lib/engine/previs-poses"
 import type { Ue4BodyType } from "@/lib/engine/previs-ue4-rig"
-import type { BlockingItem, PrevisShot, WorkflowStage } from "@/lib/types"
+import type { BlockingItem, PrevisLight, PrevisShot, WorkflowStage } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -318,7 +336,7 @@ function NameField({
 }
 
 function TransformGroup({
-  item, showLabels, onShowLabelsChange, onChange, onRename,
+  item, showLabels, onShowLabelsChange, onChange, onRename, onRemove,
 }: {
   item: BlockingItem
   showLabels: boolean
@@ -329,6 +347,7 @@ function TransformGroup({
     scale?: [number, number, number]
   }) => void
   onRename: (name: string) => void
+  onRemove: () => void
 }) {
   const rows: { label: string; field: "position" | "rotation" | "scale"; values: [number, number, number] }[] = [
     { label: "位置", field: "position", values: item.position },
@@ -382,6 +401,20 @@ function TransformGroup({
           />
         </button>
       </div>
+      {/* 从舞台移除：与视口选中同源（选中谁就删谁），地形是布景地面 → 不可删故禁用 */}
+      <div className="flex items-center justify-between border-t border-border/40 pt-1.5 text-xs">
+        <span className="text-muted-foreground">从舞台移除</span>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={item.kind === "terrain"}
+          title={item.kind === "terrain" ? "地形是布景地面，不可移除" : `移除 ${item.name}`}
+          className="h-6 gap-1 px-2 text-[11px] text-destructive hover:text-destructive"
+          onClick={onRemove}
+        >
+          <Trash2Icon className="size-3.5" /> 移除
+        </Button>
+      </div>
     </div>
   )
 }
@@ -389,6 +422,7 @@ function TransformGroup({
 /** 图标条分区图标（顺序与 SIDEBAR_SECTIONS 一致；label 同时用作 title/aria-label） */
 const SIDEBAR_RAIL_ITEMS: { id: SidebarSection; label: string; Icon: LucideIcon }[] = [
   { id: "camera", label: "机位", Icon: CameraIcon },
+  { id: "light", label: "光源", Icon: SunIcon },
   { id: "items", label: "布景项", Icon: BoxesIcon },
   { id: "pose", label: "角色姿态", Icon: PersonStandingIcon },
   { id: "transform", label: "变换", Icon: Move3dIcon },
@@ -495,6 +529,8 @@ function BlockingShotEditor({
   const { state, dispatch } = useApp()
   const [items, setItems] = React.useState<BlockingItem[]>(shot.blocking)
   const [camera, setCamera] = React.useState<PrevisShot["camera"]>(shot.camera)
+  /** 本分镜的附加光源（旧数据无 lights = 空表；撤销栈快照同样按可选处理） */
+  const [lights, setLightsState] = React.useState<PrevisLight[]>(shot.lights ?? [])
   /**
    * 多选：保持插入序，末位即「主选中项」。`selected` 由它派生，于是全部**读取**点
    * （gizmo 挂载、右侧栏单件面板、2D 高亮）无需改动，只有**写入**点区分单选/加选。
@@ -504,6 +540,9 @@ function BlockingShotEditor({
   /** 单选写入口：把单选当成特例，避免两套状态并存 */
   const setSelected = React.useCallback((id: string | null) => setSelectedIds(selectOnly(id)), [])
   const [dragId, setDragId] = React.useState<string | null>(null)
+  /** 光源选中：与图元/机位选中互斥（视口内三类选中同一时刻至多其一）。
+   *  本地即可——光源随分镜，编辑器按 shot 重建时选中随之重置（不同于父级持有的 rigSelected）。 */
+  const [selectedLightId, setSelectedLightId] = React.useState<string | null>(null)
   const [mapTab, setMapTab] = React.useState<"preview" | "depth" | "edge">("preview")
   const [centerTab, setCenterTab] = React.useState<"view3d" | "preview" | "depth" | "edge">("view3d")
   const [captured, setCaptured] = React.useState<CaptureResult | null>(null)
@@ -526,18 +565,21 @@ function BlockingShotEditor({
   const [scrollTarget, setScrollTarget] = React.useState<SidebarSection | null>(null)
 
   // 撤销/重做从 reducer 回灌：props 快照键变化（外部恢复）→ 重置本地编辑态
-  const propsKey = JSON.stringify([shot.blocking, shot.camera])
+  const propsKey = JSON.stringify([shot.blocking, shot.camera, shot.lights])
   const lastKey = React.useRef(propsKey)
   React.useEffect(() => {
     if (propsKey !== lastKey.current) {
       lastKey.current = propsKey
       setItems(shot.blocking)
       setCamera(shot.camera)
+      setLightsState(shot.lights ?? [])
       // 仅当外部恢复真的改动了内容（undo/redo/他处改写）或选中项被移除时才动选择——
       // 本编辑器自身提交后的同内容回灌保留选择（gizmo 终帧、姿态滑杆、字段提交后不摘除）
       const ownRoundTrip = JSON.stringify(shot.blocking) === JSON.stringify(itemsRef.current)
       if (!ownRoundTrip) setSelectedIds([])
       else setSelectedIds((prev) => pruneSelection(prev, shot.blocking.map((b) => b.id)))
+      // 光源选中同样只在「它确实不在了」时清掉（撤销会整表换引用，不能据此取消选中）
+      setSelectedLightId((prev) => (prev && (shot.lights ?? []).some((l) => l.id === prev) ? prev : null))
       // 撤销/重做恢复的是纯数据：已导出的位图与瞬态环绕条与当前状态不一致，清空待重新渲染
       setCaptured(null)
       setOrbits([])
@@ -556,7 +598,7 @@ function BlockingShotEditor({
    *  派生而非 effect 同步：无额外渲染，工具条高亮与视口 gizmo 模式始终一致；
    *  取消选中后恢复用户此前选择的模式（scale 按钮在选中 rig 时另有 toast 守卫，不会切模式）。 */
   const effectiveTransformMode: TransformMode =
-    rigSelected && transformMode === "scale" ? "translate" : transformMode
+    (rigSelected || selectedLightId != null) && transformMode === "scale" ? "translate" : transformMode
 
   /** 本地编辑态提交到 reducer（一次逻辑编辑仅产生一个撤销快照：
    *   BLOCKING 先推快照（编辑前状态），CAMERA 复用同一快照不重复推；
@@ -670,6 +712,8 @@ function BlockingShotEditor({
   /** rig 点击标记：视口同一手势内先 onSelectShot(i) 再 onSelect(null)——后者是「清图元选中」
    *  的伴随调用，不得当作空点清掉刚选中的 rig（两者同步顺序固定，故用 ref 消歧） */
   const rigClickRef = React.useRef(false)
+  /** 光源点击标记：与 rigClickRef 同因——视口光源点击会跟一发 onSelect(null) 清图元选中 */
+  const lightClickRef = React.useRef(false)
 
   /** 视口 rig 点击：选中该机位（父级持有）+ 切换分镜（沿用 shotIndex 选择语义） */
   const handleSelectShot = (index: number) => {
@@ -678,10 +722,12 @@ function BlockingShotEditor({
     onShotIndexChange(index)
   }
 
-  /** 视口选中回调（图元/空点）：图元选中与 rig 选中互斥——任何非 rig 点击都清 rig 选中 */
+  /** 视口选中回调（图元/空点）：三类选中互斥——任何非 rig/非光源点击都清掉另两类 */
   const handleSelect = (id: string | null, additive = false) => {
     if (rigClickRef.current) rigClickRef.current = false
     else onRigSelect?.(null)
+    if (lightClickRef.current) lightClickRef.current = false
+    else setSelectedLightId(null)
     // 加选（Cmd/Ctrl/Shift）只在点中图元时生效；点空白一律清空，否则多选无法退出
     if (additive && id != null) setSelectedIds((prev) => toggleSelection(prev, id))
     else setSelectedIds(selectOnly(id))
@@ -692,6 +738,7 @@ function BlockingShotEditor({
    *  inline 无 3D 视口与 rig，仅作镜头切换，保持既有 parity） */
   const selectCameraRow = (index: number) => {
     setSelected(null)
+    setSelectedLightId(null)
     onShotIndexChange(index)
     if (variant === "fullscreen") onRigSelect?.(index)
   }
@@ -805,6 +852,57 @@ function BlockingShotEditor({
     dispatch({ type: "UPDATE_PREVIS_CAMERA", projectId, stageId: stage.id, shotIndex, camera: cam, commit: true })
   }
 
+  // —— 光源：与机位同一套口径（commit:true 单步撤销；拖拽帧不落库） ——
+
+  /** 光源表落库（唯一写入口）：整表替换 + 一次撤销快照（与 UPDATE_PREVIS_BLOCKING 同构） */
+  const commitLights = (next: PrevisLight[]) => {
+    if (JSON.stringify(next) === JSON.stringify(lights)) return // 无实质变更：不占撤销栈
+    setLightsState(next)
+    dispatch({ type: "UPDATE_PREVIS_LIGHTS", projectId, stageId: stage.id, shotIndex, lights: next, commit: true })
+  }
+
+  const patchLight = (id: string, patch: Partial<PrevisLight>) =>
+    commitLights(lights.map((l) => (l.id === id ? { ...l, ...patch } : l)))
+
+  /** 选中某盏光源并展开右栏光源分区（选中它却看不到参数就白选了） */
+  const focusLight = (id: string) => {
+    setSelectedLightId(id)
+    setOpenSections((prev) => openSection(prev, "light"))
+  }
+
+  /** 「添加光源」：默认位姿即可见（与默认主光同象限）+ 自动选中（右栏面板随即展开） */
+  const addLight = () => {
+    const light = makeLight(randomItemId("lt"), lights)
+    commitLights([...lights, light])
+    focusLight(light.id)
+    setSelected(null) // 三类选中互斥
+    onRigSelect?.(null)
+    setOpenMenu(null)
+  }
+
+  /** 删除光源：选中的那盏若被删则清选中（否则 gizmo 挂在已移除的 rig 上） */
+  const removeLight = (id: string) => {
+    commitLights(lights.filter((l) => l.id !== id))
+    setSelectedLightId((prev) => (prev === id ? null : prev))
+  }
+
+  /** 视口光源拖动回写（onMoveLight）：commit=false 帧不落库（与 handleMoveRig 同口径） */
+  const handleMoveLight = (id: string, pose: PrevisLightPose, commitFlag: boolean) => {
+    if (commitFlag !== true) return
+    const cur = lights.find((l) => l.id === id)
+    if (!cur) return
+    commitLights(lights.map((l) => (l.id === id ? { ...l, position: pose.position, target: pose.target } : l)))
+  }
+
+  /** 视口光源点击：选中该光源（与图元/机位选中互斥）。
+   *  lightClickRef 消歧视口同一手势里紧随的 onSelect(null)（见 rigClickRef 同因） */
+  const handleSelectLight = (id: string) => {
+    lightClickRef.current = true
+    focusLight(id)
+    setSelected(null)
+    onRigSelect?.(null)
+  }
+
   /** 变换字段（右栏）提交 → 同一 commit 通路 */
   const changeTransform = (
     id: string,
@@ -834,6 +932,7 @@ function BlockingShotEditor({
     setItems(next)
     setSelected(id)
     onRigSelect?.(null) // 新角色自动选中 → 清 rig 选中（选中态互斥）
+    setSelectedLightId(null) // 同上：图元/机位/光源三类选中至多其一
     setOpenMenu(null)
     dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: next, commit: true })
   }
@@ -898,17 +997,24 @@ function BlockingShotEditor({
     setItems(next)
     setSelected(copy.id)
     onRigSelect?.(null) // 粘贴副本自动选中 → 清 rig 选中（选中态互斥）
+    setSelectedLightId(null)
     setOpenMenu(null)
     commit(next, camera)
   }
-  const removeSelected = () => {
-    const sel = selected
-    const item = items.find((b) => b.id === sel)
+  /** 从舞台移除一个布景项（行内垃圾桶 / 变换分区「移除」/ Delete 键共用）。
+   *  3D 侧的资源释放不在这里：视口的 items 同步 effect 会按「已不在 items 里的 mesh」
+   *  走 disposeObject（角色模型另有 modelDisposers 专属释放）——与撤销/重做恢复同一条路径。 */
+  const removeItem = (id: string) => {
+    const item = items.find((b) => b.id === id)
     if (!item || item.kind === "terrain") return // 地形不可删（布景地面语义）
-    const next = items.filter((b) => b.id !== sel)
-    setSelected(null)
+    const next = items.filter((b) => b.id !== id)
     setItems(next)
+    // 被删的可能是加选中的非主选中项 → 整集按存活 id 收敛，不只清主选中项
+    setSelectedIds((prev) => pruneSelection(prev, next.map((b) => b.id)))
     dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: next, commit: true })
+  }
+  const removeSelected = () => {
+    if (selected) removeItem(selected)
   }
   const undo = () => dispatch({ type: "PREVIS_UNDO", projectId, stageId: stage.id })
   const redo = () => dispatch({ type: "PREVIS_REDO", projectId, stageId: stage.id })
@@ -941,13 +1047,16 @@ function BlockingShotEditor({
       }
       if (!mod && (e.key === "Delete" || e.key === "Backspace")) {
         e.preventDefault()
-        removeSelected()
+        // 三类选中各自删各的：光源 → 该光源；图元 → 该图元；机位 → 删整个分镜（需二次确认）
+        if (selectedLightId) removeLight(selectedLightId)
+        else if (selected) removeSelected()
+        else if (rigSelected) setConfirmDeleteShot(true)
       }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 处理函数每次渲染重建；仅需在其依赖的状态变化时重挂监听
-  }, [variant, selected, items, clipboard, camera])
+  }, [variant, selected, selectedLightId, rigSelected, items, lights, clipboard, camera])
 
   // —— 布局区块：inline 堆叠、fullscreen 两栏（画布 + 可折叠侧栏），共用同一交互逻辑 ——
   const canvasEl = (
@@ -1066,6 +1175,7 @@ function BlockingShotEditor({
             onClick={() => {
               setSelected(selected === b.id ? null : b.id)
               onRigSelect?.(null) // 图元选中 → 清 rig 选中（selectedShotId 不得重新断言过期 rig）
+              setSelectedLightId(null)
             }}
             className={cn(
               "flex cursor-pointer items-center gap-2 rounded-md border px-2 py-1",
@@ -1115,6 +1225,18 @@ function BlockingShotEditor({
                 ariaLabel={`${b.name} Z 坐标`}
               />
             </label>
+            <button
+              type="button"
+              title={`从舞台移除 ${b.name}`}
+              aria-label={`从舞台移除 ${b.name}`}
+              onClick={(e) => {
+                e.stopPropagation() // 行点击是选中切换，删除不该顺带改选中态
+                removeItem(b.id)
+              }}
+              className="ml-auto shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+            >
+              <Trash2Icon className="size-3.5" />
+            </button>
           </div>
         ))
       ) : variant === "fullscreen" ? (
@@ -1125,8 +1247,11 @@ function BlockingShotEditor({
 
   const selectedItem = items.find((b) => b.id === selected)
 
-  /** 当前选择下适用的分区：驱动图标条置灰与条件分区渲染（spec §2.3/§3.1） */
-  const applicable = new Set(applicableSections(selectedItem ? { kind: selectedItem.kind } : null))
+  /** 当前选择下适用的分区：驱动图标条置灰与条件分区渲染（spec §2.3/§3.1）。
+   *  光源分区只在真有光源时出现——空的「光源」分区没有可做的事（添加入口在画布胶囊里）。 */
+  const applicable = new Set(
+    applicableSections(selectedItem ? { kind: selectedItem.kind } : null, lights.length > 0),
+  )
   const toggleSec = (id: SidebarSection) => setOpenSections((prev) => toggleSection(prev, id))
   const openAt = (id: SidebarSection) => {
     onSidebarCollapsedChange(false)
@@ -1137,12 +1262,13 @@ function BlockingShotEditor({
   /** 选择变化 → 自动展开相关分区。
    *  依赖只有 selKey：用户手动收起某分区后，只要选择不变就不会被"打架"重开（spec §3.3）。 */
   const selKey = selectedItem ? `${selectedItem.id}:${selectedItem.kind}` : null
+  const hasLights = lights.length > 0
   React.useEffect(() => {
-    for (const id of sectionsForSelection(selectedItem ?? null)) {
+    for (const id of sectionsForSelection(selectedItem ?? null, hasLights)) {
       setOpenSections((prev) => openSection(prev, id))
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅以 selKey 为依赖：若改依赖 selectedItem/items，每次 store 更新都会重跑并重新打开用户刚手动收起的分区
-  }, [selKey])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅以 selKey/hasLights 为依赖：若改依赖 selectedItem/items，每次 store 更新都会重跑并重新打开用户刚手动收起的分区
+  }, [selKey, hasLights])
 
   React.useEffect(() => {
     if (!scrollTarget) return
@@ -1160,6 +1286,7 @@ function BlockingShotEditor({
         onShowLabelsChange={setShowLabels}
         onChange={(patch) => changeTransform(selectedItem.id, patch)}
         onRename={(name) => renameItem(selectedItem.id, name)}
+        onRemove={() => removeItem(selectedItem.id)}
       />
     ) : null
 
@@ -1302,6 +1429,141 @@ function BlockingShotEditor({
     </div>
   )
 
+  /** 右栏光源面板：每盏一行（名字/强度/投影/删除），选中的那盏另给位姿输入（与机位面板同构）。
+   *  分区只在真有光源时渲染（applicable.has("light")），故这里不必写空态。 */
+  const lightsEl = (
+    <div className="flex flex-col gap-1.5">
+      {lights.map((light) => {
+        const active = light.id === selectedLightId
+        return (
+          <div
+            key={light.id}
+            className={cn(
+              "rounded-md border p-2 transition-colors",
+              active ? "border-primary/60 bg-primary/5 ring-1 ring-primary/30" : "border-border/60",
+            )}
+          >
+            <div className="flex items-center gap-1">
+              <NameField
+                value={light.name}
+                onCommit={(name) => patchLight(light.id, { name })}
+                ariaLabel={`${light.name} 名称`}
+              />
+              <button
+                type="button"
+                title={`删除 ${light.name}`}
+                aria-label={`删除 ${light.name}`}
+                onClick={() => removeLight(light.id)}
+                className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2Icon className="size-3.5" />
+              </button>
+            </div>
+            <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span className="w-8 shrink-0">强度</span>
+              <input
+                type="range"
+                min={LIGHT_INTENSITY_RANGE.min}
+                max={LIGHT_INTENSITY_RANGE.max}
+                step={0.1}
+                value={light.intensity}
+                onChange={(e) => patchLight(light.id, { intensity: clampLightIntensity(Number(e.target.value)) })}
+                aria-label={`${light.name} 强度`}
+                className="min-w-0 flex-1 accent-primary"
+              />
+              <span className="w-8 shrink-0 text-right tabular-nums">{light.intensity.toFixed(1)}</span>
+            </label>
+            <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>投射阴影</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={light.castShadow}
+                aria-label={`${light.name} 投射阴影`}
+                onClick={() => patchLight(light.id, { castShadow: !light.castShadow })}
+                className={cn("h-4 w-7 rounded-full transition-colors", light.castShadow ? "bg-primary" : "bg-border")}
+              >
+                <span
+                  className={cn(
+                    "block size-3.5 translate-x-0.5 rounded-full bg-background transition-transform",
+                    light.castShadow && "translate-x-3",
+                  )}
+                />
+              </button>
+            </div>
+            {/* 位姿输入仅给选中那盏：与机位面板同构的精确摆位（未选中时只少这两行） */}
+            {active && (
+              <div className="mt-1.5 flex flex-col gap-1 border-t border-border/40 pt-1.5">
+                {(["position", "target"] as const).map((axis) => (
+                  <div key={axis} className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                    <span className="w-8 shrink-0">{axis === "position" ? "灯位" : "目标"}</span>
+                    {(["x", "y", "z"] as const).map((letter, idx) => (
+                      <React.Fragment key={letter}>
+                        <span className="shrink-0 text-[10px]">{letter.toUpperCase()}</span>
+                        <NumField
+                          value={light[axis][idx as 0 | 1 | 2]}
+                          step={0.5}
+                          onCommit={(v) => {
+                            if (!Number.isFinite(v)) return
+                            const next: [number, number, number] = [...light[axis]] as [number, number, number]
+                            next[idx as 0 | 1 | 2] = round2(clamp(v, CAM_RANGE))
+                            patchLight(light.id, { [axis]: next } as Partial<PrevisLight>)
+                          }}
+                          ariaLabel={`${light.name} ${axis === "position" ? "灯位" : "目标"} ${letter.toUpperCase()}`}
+                        />
+                      </React.Fragment>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+
+  /** 分镜删除（= 机位随之消失）：破坏性是「整个镜头连布景一起」→ 必走二次确认 */
+  const [confirmDeleteShot, setConfirmDeleteShot] = React.useState(false)
+  const deleteShot = () => {
+    setConfirmDeleteShot(false)
+    if (shotsCount <= 1) return // 与 reducer 同守卫：至少留一个分镜
+    dispatch({ type: "DELETE_PREVIS_SHOT", projectId, stageId: stage.id, shotIndex })
+    // 剩余分镜重编号 → 当前索引可能越界，钳到新的末位（否则编辑器停在已不存在的镜头上）
+    onShotIndexChange(Math.max(0, Math.min(shotIndex, shotsCount - 2)))
+    onRigSelect?.(null)
+  }
+  const deleteShotEl = (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={shotsCount <= 1}
+      title={shotsCount <= 1 ? "至少保留一个分镜" : `删除 ${rigLabel(shotIndex)} 及其布景`}
+      className="gap-1 text-xs text-destructive hover:text-destructive"
+      onClick={() => setConfirmDeleteShot(true)}
+    >
+      <Trash2Icon className="size-3.5" /> 删除该分镜
+    </Button>
+  )
+  const confirmDeleteShotEl = (
+    <AlertDialog open={confirmDeleteShot} onOpenChange={(open) => !open && setConfirmDeleteShot(false)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>删除「{rigLabel(shotIndex)}」？</AlertDialogTitle>
+          <AlertDialogDescription>
+            该分镜的布景与光源会一并删除，其余分镜重新编号。此操作可用「撤销」恢复。
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={() => setConfirmDeleteShot(false)}>取消</AlertDialogCancel>
+          <AlertDialogAction onClick={deleteShot} className="bg-red-600 text-white hover:bg-red-600/90">
+            <Trash2Icon /> 确认删除
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+
   const actionsEl = (
     <div className="flex justify-end gap-2">
       <Button size="sm" variant="ghost" onClick={onDone}>
@@ -1398,6 +1660,7 @@ function BlockingShotEditor({
     return (
       <>
         {styleEl}
+        {confirmDeleteShotEl}
         <div className="flex h-full min-h-0 gap-3">
           <div className="flex min-h-0 flex-1 flex-col gap-3">
             {centerTabsEl}
@@ -1420,6 +1683,10 @@ function BlockingShotEditor({
                     onTransform={handleTransform}
                     onMoveRig={handleMoveRig}
                     selectedShotId={rigSelected ? `__cam_${shotIndex}` : null}
+                    lights={lights}
+                    selectedLightId={selectedLightId}
+                    onSelectLight={handleSelectLight}
+                    onMoveLight={handleMoveLight}
                   />
                   {/* 弹层打开时：点画布空白处关闭（高于 FrameOverlay、低于 pill） */}
                   {viewMode === "director" && openMenu != null && (
@@ -1453,9 +1720,12 @@ function BlockingShotEditor({
                             icon={<Scale3dIcon className="size-4" />}
                             label="缩放"
                             onClick={() => {
-                              // 机位不支持缩放（spec §4.2）：toast 且模式不切（视口侧同样不进入 scale）
-                              if (rigSelected) {
-                                toast.add({ title: "机位不支持缩放", type: "warning" })
+                              // 机位/光源不支持缩放（spec §4.2）：toast 且模式不切（视口侧同样不进入 scale）
+                              if (rigSelected || selectedLightId != null) {
+                                toast.add({
+                                  title: rigSelected ? "机位不支持缩放" : "光源不支持缩放",
+                                  type: "warning",
+                                })
                                 return
                               }
                               setTransformMode("scale")
@@ -1495,10 +1765,10 @@ function BlockingShotEditor({
                           />
                         </div>
                       </div>
-                      {/* 添加角色体型选择 */}
+                      {/* 添加菜单：角色体型 + 光源 */}
                       {openMenu === "add" && (
                         <div className="absolute bottom-14 left-1/2 z-20 w-44 -translate-x-1/2 rounded-xl border border-border/60 bg-background/95 p-1 shadow-lg backdrop-blur-md">
-                          <p className="px-2 py-1 text-[10px] font-medium text-muted-foreground">选择体型</p>
+                          <p className="px-2 py-1 text-[10px] font-medium text-muted-foreground">添加角色</p>
                           {BODY_TYPES.map((b) => (
                             <button
                               key={b.id}
@@ -1510,6 +1780,18 @@ function BlockingShotEditor({
                               <span className="text-[10px] text-muted-foreground">{b.id}</span>
                             </button>
                           ))}
+                          <span className="my-1 block h-px bg-border" />
+                          {/* 添加光源：与添加角色同一菜单（画布上「加东西」只有这一个入口） */}
+                          <button
+                            type="button"
+                            onClick={addLight}
+                            className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs transition-colors hover:bg-foreground/10"
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <SunIcon className="size-3.5 text-amber-500" /> 添加光源
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">平行光</span>
+                          </button>
                         </div>
                       )}
                       {/* 画幅切换 */}
@@ -1660,8 +1942,22 @@ function BlockingShotEditor({
                   <div className="flex flex-col gap-2">
                     {shotSelectorEl}
                     {cameraEl}
+                    {deleteShotEl}
                   </div>
                 </SidebarSection>
+                {applicable.has("light") && (
+                  <SidebarSection
+                    label="光源"
+                    badge={lights.length}
+                    open={openSections.has("light")}
+                    onToggle={() => toggleSec("light")}
+                    sectionRef={(el) => {
+                      sectionRefs.current.light = el
+                    }}
+                  >
+                    {lightsEl}
+                  </SidebarSection>
+                )}
                 <SidebarSection
                   label="布景项"
                   badge={draggable.length}
@@ -1717,6 +2013,7 @@ function BlockingShotEditor({
   return (
     <div className="space-y-3">
       {styleEl}
+      {confirmDeleteShotEl}
       {shotSelectorEl}
       {canvasEl}
       <p className="text-[11px] text-muted-foreground">

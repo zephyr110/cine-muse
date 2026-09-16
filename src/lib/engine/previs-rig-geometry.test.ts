@@ -15,9 +15,14 @@ import {
   CAM_LINE_COLOR,
   CAM_LINE_OPACITY,
   CAM_SCALE,
+  LIGHT_LINE_COLOR,
+  LIGHT_LINE_OPACITY,
+  LIGHT_SCALE,
   cameraBodyWireframeLines,
   cameraFrustumLines,
   cameraHitArea,
+  lightHitArea,
+  lightWireframeLines,
   type WirePoint,
 } from "./previs-rig-geometry"
 
@@ -109,5 +114,51 @@ describe("previs-rig-geometry（机位 rig 线框锁定）", () => {
     expect(CAM_SCALE).toBe(0.35)
     expect(CAM_LINE_COLOR).toBe(0xa9d8ff)
     expect(CAM_LINE_OPACITY).toBe(0.92)
+  })
+})
+
+/** 光源 glyph 逐点表：环（半径 0.2，xy 平面 33 点闭环）+ 4 条平行射线（±0.125 起 → z=1.2） */
+const LIGHT_RING: WirePoint[] = Array.from({ length: 33 }, (_, i) => {
+  const a = (Math.PI * 2 * i) / 32
+  return snapPoint([Math.cos(a) * 0.2, Math.sin(a) * 0.2, 0])
+})
+const LIGHT_RAYS: WirePoint[][] = [
+  [[0.125, 0, 0.1], [0.125, 0, 1.2]],
+  [[-0.125, 0, 0.1], [-0.125, 0, 1.2]],
+  [[0, 0.125, 0.1], [0, 0.125, 1.2]],
+  [[0, -0.125, 0.1], [0, -0.125, 1.2]],
+]
+
+describe("previs-rig-geometry（光源 rig 线框锁定）", () => {
+  it("lightWireframeLines：1 环 + 4 射线，逐点锁定", () => {
+    const lines = lightWireframeLines()
+    expect(lines).toHaveLength(5)
+    expect(lines[0].map(snapPoint)).toEqual(LIGHT_RING)
+    expect(lines.slice(1).map((line) => line.map(snapPoint))).toEqual(LIGHT_RAYS)
+  })
+
+  it("lightHitArea：命中盒尺寸/中心锁定（glyph 包围盒 + padding）", () => {
+    const { args, position } = lightHitArea()
+    expect([snapPoint(args), snapPoint(position)]).toEqual([
+      [0.52, 0.52, 1.32],
+      [0, 0, 0.6],
+    ])
+  })
+
+  it("光源线色与不透明度锁定（琥珀，区别于机位淡蓝）", () => {
+    expect(LIGHT_SCALE).toBe(0.4)
+    expect(LIGHT_LINE_COLOR).toBe(0xf59e0b)
+    expect(LIGHT_LINE_OPACITY).toBe(0.95)
+    expect(LIGHT_LINE_COLOR).not.toBe(CAM_LINE_COLOR)
+  })
+
+  it("命中盒罩得住整个 glyph（射线长度与环半径都在盒内）", () => {
+    const { args, position } = lightHitArea()
+    const points = lightWireframeLines().flat()
+    for (const p of points) {
+      expect(Math.abs(p[0] - position[0])).toBeLessThanOrEqual(args[0] / 2)
+      expect(Math.abs(p[1] - position[1])).toBeLessThanOrEqual(args[1] / 2)
+      expect(Math.abs(p[2] - position[2])).toBeLessThanOrEqual(args[2] / 2)
+    }
   })
 })
