@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import {
+  AlignVerticalJustifyEndIcon,
   BoxesIcon,
   CameraIcon,
   ChevronRightIcon,
@@ -30,6 +31,8 @@ import { useApp } from "@/lib/store"
 import { injectMarkerIds, renderPrevisShot, svgDataUrl } from "@/lib/engine/previs-render"
 import { isPrevisArtifact } from "@/lib/engine/previs-types"
 import { nextCharacterPosition, nextPastePosition } from "@/lib/engine/previs-placement"
+import { alignBottoms } from "@/lib/engine/previs-arrange"
+import { primaryId, pruneSelection, selectOnly, toggleSelection } from "@/lib/engine/previs-selection"
 import {
   DEFAULT_OPEN_SECTIONS,
   SIDEBAR_RAIL_WIDTH_PX,
@@ -427,7 +430,14 @@ function BlockingShotEditor({
   const { state, dispatch } = useApp()
   const [items, setItems] = React.useState<BlockingItem[]>(shot.blocking)
   const [camera, setCamera] = React.useState<PrevisShot["camera"]>(shot.camera)
-  const [selected, setSelected] = React.useState<string | null>(null)
+  /**
+   * 多选：保持插入序，末位即「主选中项」。`selected` 由它派生，于是全部**读取**点
+   * （gizmo 挂载、右侧栏单件面板、2D 高亮）无需改动，只有**写入**点区分单选/加选。
+   */
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([])
+  const selected = primaryId(selectedIds)
+  /** 单选写入口：把单选当成特例，避免两套状态并存 */
+  const setSelected = React.useCallback((id: string | null) => setSelectedIds(selectOnly(id)), [])
   const [dragId, setDragId] = React.useState<string | null>(null)
   const [mapTab, setMapTab] = React.useState<"preview" | "depth" | "edge">("preview")
   const [centerTab, setCenterTab] = React.useState<"view3d" | "preview" | "depth" | "edge">("view3d")
@@ -461,17 +471,16 @@ function BlockingShotEditor({
       lastKey.current = propsKey
       setItems(shot.blocking)
       setCamera(shot.camera)
-      // 仅当外部恢复真的改动了内容（undo/redo/他处改写）或选中项被移除时才清选择——
+      // 仅当外部恢复真的改动了内容（undo/redo/他处改写）或选中项被移除时才动选择——
       // 本编辑器自身提交后的同内容回灌保留选择（gizmo 终帧、姿态滑杆、字段提交后不摘除）
       const ownRoundTrip = JSON.stringify(shot.blocking) === JSON.stringify(itemsRef.current)
-      if (!ownRoundTrip || (selected != null && !shot.blocking.some((b) => b.id === selected))) {
-        setSelected(null)
-      }
+      if (!ownRoundTrip) setSelectedIds([])
+      else setSelectedIds((prev) => pruneSelection(prev, shot.blocking.map((b) => b.id)))
       // 撤销/重做恢复的是纯数据：已导出的位图与瞬态环绕条与当前状态不一致，清空待重新渲染
       setCaptured(null)
       setOrbits([])
     }
-  }, [propsKey, shot, selected])
+  }, [propsKey, shot])
 
   // 画幅 letterbox：舞台容器实测 → 按所选比例的最大内接区（fullscreen 3D 画布）
   React.useEffect(() => {
@@ -520,14 +529,17 @@ function BlockingShotEditor({
   const edgeSvg = rendered.edgeSvg
 
   // 选中标记高亮（每次重新注入 SVG 后同步一次；data-selected 由 style 标签描边）
+  // 多选：全部加选中的都描边——只描主选中项的话，加选完看不出选了谁
   React.useEffect(() => {
     const host = svgBoxRef.current
     if (!host) return
+    const sel = new Set(selectedIds)
     for (const el of Array.from(host.querySelectorAll<SVGElement>("[data-bid]"))) {
-      if (el.getAttribute("data-bid") === selected) el.setAttribute("data-selected", "")
+      const id = el.getAttribute("data-bid")
+      if (id != null && sel.has(id)) el.setAttribute("data-selected", "")
       else el.removeAttribute("data-selected")
     }
-  }, [previewSvg, selected, mapTab])
+  }, [previewSvg, selectedIds, mapTab])
 
   const draggable = items.filter((b) => b.kind !== "terrain")
 
@@ -623,10 +635,12 @@ function BlockingShotEditor({
   }
 
   /** 视口选中回调（图元/空点）：图元选中与 rig 选中互斥——任何非 rig 点击都清 rig 选中 */
-  const handleSelect = (id: string | null) => {
+  const handleSelect = (id: string | null, additive = false) => {
     if (rigClickRef.current) rigClickRef.current = false
     else onRigSelect?.(null)
-    setSelected(id)
+    // 加选（Cmd/Ctrl/Shift）只在点中图元时生效；点空白一律清空，否则多选无法退出
+    if (additive && id != null) setSelectedIds((prev) => toggleSelection(prev, id))
+    else setSelectedIds(selectOnly(id))
   }
 
   /** 左栏机位行点击：切换分镜 + 清图元选中（与视口 rig 点击同口径——rig 选中期间
@@ -782,6 +796,30 @@ function BlockingShotEditor({
   const toggleOrbit = () => {
     if (orbits.length > 0) setOrbits([])
     else setOrbits(viewportRef.current?.captureOrbitPreviews(8) ?? [])
+  }
+
+  /**
+   * pill「一键整理」：把选中图元的**底面**对齐到地面（多选时作用于全集，顺序无关）。
+   * 只有真的需要挪动的项才写回 → 本就整齐时是空操作（不占撤销栈，见 alignBottoms）。
+   */
+  const arrangeSelected = () => {
+    if (selectedIds.length === 0) {
+      toast.add({ title: "先在画布上选中要整理的模型（按住 Cmd / Shift 可多选）", type: "info" })
+      return
+    }
+    const patches = alignBottoms(itemsRef.current, selectedIds)
+    if (patches.length === 0) {
+      toast.add({ title: "选中的模型已经在同一水平面上", type: "info" })
+      return
+    }
+    const yById = new Map(patches.map((p) => [p.id, p.y]))
+    const next = itemsRef.current.map((b) => {
+      const y = yById.get(b.id)
+      return y == null ? b : { ...b, position: [b.position[0], y, b.position[2]] as [number, number, number] }
+    })
+    setItems(next)
+    dispatch({ type: "UPDATE_PREVIS_BLOCKING", projectId, stageId: stage.id, shotIndex, blocking: next, commit: true })
+    toast.add({ title: `已把 ${patches.length} 个模型对齐到同一水平面`, type: "success" })
   }
 
   /** 复制/粘贴/撤销/重做/删除的共享实现（工具条按钮与快捷键同一通路） */
@@ -1304,6 +1342,7 @@ function BlockingShotEditor({
                     transformMode={effectiveTransformMode}
                     showLabels={showLabels}
                     selectedId={selected}
+                    selectedIds={selectedIds}
                     onSelect={handleSelect}
                     onSelectShot={handleSelectShot}
                     onTransform={handleTransform}
@@ -1375,6 +1414,12 @@ function BlockingShotEditor({
                             icon={<OrbitIcon className="size-4" />}
                             label="环绕拍摄"
                             onClick={toggleOrbit}
+                          />
+                          <span className="mx-0.5 h-4 w-px bg-border" />
+                          <ModeButton
+                            icon={<AlignVerticalJustifyEndIcon className="size-4" />}
+                            label="一键整理（底面齐平）"
+                            onClick={arrangeSelected}
                           />
                         </div>
                       </div>

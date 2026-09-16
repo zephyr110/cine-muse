@@ -116,16 +116,20 @@ function ancestorShotIndex(obj: THREE.Object3D | null): number | null {
   return null
 }
 
-/** 包围盒线框（仅边缘图导出使用；选中高亮已移除，spec §4.1）：Group 取整体包围盒，Mesh 直接取几何边 */
+/** 包围盒线框（边缘图导出 + 多选红框共用）：Group 取整体包围盒，Mesh 直接取几何边。
+ *  世界坐标系（供直接挂场景的子级使用）；调用方须保证 obj 的世界矩阵是最新的。 */
 function buildBoundsEdges(obj: THREE.Object3D): THREE.LineSegments {
+  obj.updateWorldMatrix(true, true) // 刚改过 transform 的对象其世界矩阵可能尚未刷新
   const box = new THREE.Box3().setFromObject(obj)
   if (obj instanceof THREE.Group) {
     const size = box.getSize(new THREE.Vector3())
     const center = box.getCenter(new THREE.Vector3())
+    const src = new THREE.BoxGeometry(size.x + 0.12, size.y + 0.12, size.z + 0.12)
     const edges = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(size.x + 0.12, size.y + 0.12, size.z + 0.12)),
+      new THREE.EdgesGeometry(src),
       new THREE.LineBasicMaterial({ color: 0xdc2626 }),
     )
+    src.dispose() // EdgesGeometry 只烘焙边，不持有源几何
     edges.position.copy(center)
     return edges
   }
@@ -265,7 +269,11 @@ export interface PrevisViewportProps {
   items: BlockingItem[]
   camera: PrevisShot["camera"]
   selectedId: string | null
-  onSelect: (id: string | null) => void
+  /** 多选全集（末位 = 主选中项 = selectedId）。未传时退化为单选，仅 selectedId 生效。
+   *  非主选中项无 gizmo，故由视口补画红框，否则「加选了几个」在画布上不可见。 */
+  selectedIds?: readonly string[]
+  /** additive=true 表示按住了 Cmd/Ctrl/Shift —— 点选语义变为「加选/减选」而非单选 */
+  onSelect: (id: string | null, additive?: boolean) => void
   /** 全量分镜表（editor 接线后传入；未传入时退化为单镜头旧 props） */
   shots?: PrevisShot[]
   shotIndex?: number
@@ -286,7 +294,7 @@ export interface PrevisViewportProps {
 export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewportProps>(
   function PrevisViewport(props, ref) {
     const {
-      items, camera, selectedId, onSelect,
+      items, camera, selectedId, selectedIds, onSelect,
       shots = EMPTY_SHOTS, shotIndex = 0,
       viewMode = "director" as ViewMode,
       transformMode = "translate" as TransformMode,
@@ -301,6 +309,8 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       controls: OrbitControls
       itemMeshes: Map<string, THREE.Object3D>
       rigGroup: THREE.Group
+      /** 多选红框层（非主选中项；世界坐标，随 items 变化重建） */
+      outlineGroup: THREE.Group
       labelLayer: THREE.Group
       rigLabels: Map<number, CSS2DObject>
       gizmo: TransformControls
@@ -317,11 +327,11 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
     } | null>(null)
 
     const propsRef = React.useRef<ViewportRuntimeProps>({
-      items, camera, selectedId, onSelect,
+      items, camera, selectedId, selectedIds, onSelect,
       shots: [], shotIndex: 0, viewMode: "director", transformMode: "translate", showLabels: true,
     })
     propsRef.current = {
-      items, camera, selectedId, onSelect, shots,
+      items, camera, selectedId, selectedIds, onSelect, shots,
       shotIndex, viewMode, transformMode, showLabels,
       onSelectShot: props.onSelectShot,
       onTransform: props.onTransform,
@@ -429,6 +439,11 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       rigGroup.userData.hideFromViewportCapture = true
       scene.add(rigGroup)
 
+      // 多选红框层（非主选中项）：与导出/拾取无关，随选中集重建（导出排除）
+      const outlineGroup = new THREE.Group()
+      outlineGroup.userData.hideFromViewportCapture = true
+      scene.add(outlineGroup)
+
       // CSS2D 标签：独立 DOM 层天然不进 canvas 导出
       const labelLayer = new THREE.Group()
       labelLayer.userData.hideFromViewportCapture = true
@@ -475,7 +490,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       const st = {
         renderer, scene, camera, controls,
         itemMeshes: new Map<string, THREE.Object3D>(),
-        rigGroup, labelLayer, rigLabels: new Map<number, CSS2DObject>(),
+        rigGroup, outlineGroup, labelLayer, rigLabels: new Map<number, CSS2DObject>(),
         gizmo, gizmoActive: false,
         raycaster: new THREE.Raycaster(),
         viewAspect: null as number | null,
@@ -652,6 +667,26 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [items, selectedId, ue4Epoch])
+
+    // —— 多选红框：非主选中项（末位是主选中项，归 gizmo 管）——只给「没有别的反馈」的那些画框，
+    //    否则加选完在画布上看不出选了谁。世界坐标包围盒 → 挂场景（不随父变换），故随 items 重建；
+    //    拖拽中只有主选中项在动，而它不在本层，无需逐帧跟随。
+    React.useEffect(() => {
+      const st = stateRef.current
+      if (!st) return
+      const ids = propsRef.current.selectedIds ?? (selectedId ? [selectedId] : [])
+      const others = ids.slice(0, -1) // 末位 = 主选中项
+      for (const o of [...st.outlineGroup.children]) {
+        st.outlineGroup.remove(o)
+        const line = o as THREE.LineSegments
+        line.geometry.dispose()
+        ;(line.material as THREE.Material).dispose()
+      }
+      for (const id of others) {
+        const mesh = st.itemMeshes.get(id)
+        if (mesh) st.outlineGroup.add(buildBoundsEdges(mesh))
+      }
+    }, [selectedId, selectedIds, items, ue4Epoch])
 
     // —— CSS2D 角色名字标签（头顶 Box3 top + 0.15；跟随图元拖拽/缩放实时重挂） ——
     React.useEffect(() => {
@@ -915,6 +950,8 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       // 点选语义：未拖（<5px）且未被系统取消 → 点击
       if (!cancelled && st.downAt && !st.downAt.moved) {
         const { id, obj } = st.downAt
+        // 按住 Cmd/Ctrl/Shift = 加选/减选（多选）；机位与空点不参与多选
+        const additive = e.metaKey || e.ctrlKey || e.shiftKey
         if (id === "__camera__" && obj) {
           // rig 点击：选中 rig（gizmo 挂 rig 组）+ 切换分镜；同时清空图元选中（不占用 selectedId）
           const shot = ancestorShotIndex(obj)
@@ -925,7 +962,7 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
           propsRef.current.onSelect(null)
         } else if (id && id !== "__ground__") {
           setSelectedRigIndex(null)
-          propsRef.current.onSelect(id)
+          propsRef.current.onSelect(id, additive)
         } else {
           // 空点：取消图元选中 + 取消 rig 选中（spec §4.4）
           setSelectedRigIndex(null)
