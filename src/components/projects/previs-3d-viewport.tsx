@@ -95,7 +95,7 @@ const AXIS_VIEWS: Array<{
 const RIG_LABEL_OFFSET_Y = 0.55
 
 /** 从命中对象向上找携带 userData.itemId 的祖先（rig/图元 均可） */
-function ownerId(obj: THREE.Object3D | null): string | null {
+export function ownerId(obj: THREE.Object3D | null): string | null {
   let cur: THREE.Object3D | null = obj
   while (cur) {
     const id = cur.userData.itemId as string | undefined
@@ -178,7 +178,7 @@ function buildMesh(item: BlockingItem): THREE.Object3D {
 
 /** 机位 rig：0.35 缩比线框摄像机（盒体 12 线 + 镜头倒锥 + 后部双圆盘 + 视锥远帧）+ 隐形命中盒。
  *  组原点 = 摄像机位置；局部 +Z = 机位前方（指向 target，朝向由 getRigQuaternion 给出）——与 REF 同约定。 */
-function buildCameraRig(): THREE.Group {
+export function buildCameraRig(): THREE.Group {
   const g = new THREE.Group()
   const addLine = (pts: WirePoint[]) => {
     const geo = new THREE.BufferGeometry().setFromPoints(pts.map((p) => new THREE.Vector3(...p)))
@@ -186,6 +186,12 @@ function buildCameraRig(): THREE.Group {
       geo,
       new THREE.LineBasicMaterial({ color: CAM_LINE_COLOR, transparent: true, opacity: CAM_LINE_OPACITY }),
     )
+    // 线框只是视觉：必须退出拾取。three 的 Raycaster.params.Line.threshold 默认 1 个世界单位，
+    // 而这里的线没有缩放（0.35 缩比烘在几何坐标里）→ 每台机位的线框都是一枚半径约 1 单位的
+    // 「点击黑洞」（实测横向 2.5 单位外仍能截获），又因 itemId 挂在 rig 的 Group 上、线框经
+    // 祖先回溯解析成 __camera__，按距离排序会压过它后面的角色，表现为「角色鼠标点不中」。
+    // 拾取代理是下面的隐形命中盒（cameraHitArea），设计如此。
+    l.raycast = () => {}
     g.add(l)
   }
   for (const pts of cameraBodyWireframeLines()) addLine(pts)
