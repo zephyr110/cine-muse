@@ -267,8 +267,58 @@ function TransformField({
 }
 
 /** 右栏「变换」分组：位置/旋转/缩放 X Y Z 数值行 + 角色标签开关 */
+/** 名称字段：回车/失焦提交，Esc 还原；空串或未变不提交。
+ *  名称会写进 artifact，供后续环节用 prompt 指代角色/道具，故与坐标同等待遇（提交进撤销栈）。 */
+function NameField({
+  value, onCommit, ariaLabel,
+}: {
+  value: string
+  onCommit: (v: string) => void
+  ariaLabel: string
+}) {
+  const [text, setText] = React.useState(value)
+  const [focused, setFocused] = React.useState(false)
+  const [last, setLast] = React.useState(value)
+  // 渲染期派生状态：外部值变化且未在编辑 → 跟随一次（同 TransformField）
+  if (!focused && value !== last) {
+    setLast(value)
+    setText(value)
+  }
+  const commit = () => {
+    setFocused(false)
+    const t = text.trim()
+    if (t === "" || t === last) {
+      setText(last) // 空名/未改 → 回显原值，不提交
+      return
+    }
+    onCommit(t)
+    setLast(t)
+    setText(t)
+  }
+  return (
+    <input
+      value={text}
+      aria-label={ariaLabel}
+      onFocus={() => setFocused(true)}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault()
+          commit()
+        } else if (e.key === "Escape") {
+          setText(last)
+        }
+        // 不冒泡到画布的微调/删除快捷键
+        e.stopPropagation()
+      }}
+      className="h-6 min-w-0 flex-1 rounded border bg-background px-1.5 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    />
+  )
+}
+
 function TransformGroup({
-  item, showLabels, onShowLabelsChange, onChange,
+  item, showLabels, onShowLabelsChange, onChange, onRename,
 }: {
   item: BlockingItem
   showLabels: boolean
@@ -278,6 +328,7 @@ function TransformGroup({
     rotation?: [number, number, number]
     scale?: [number, number, number]
   }) => void
+  onRename: (name: string) => void
 }) {
   const rows: { label: string; field: "position" | "rotation" | "scale"; values: [number, number, number] }[] = [
     { label: "位置", field: "position", values: item.position },
@@ -286,12 +337,16 @@ function TransformGroup({
   ]
   return (
     <div className="space-y-1.5 rounded-md border border-border/60 p-2.5">
-      <p className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-        {item.name}
-        <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">
+      <div className="mb-1 flex items-center gap-1">
+        <NameField
+          value={item.name}
+          onCommit={onRename}
+          ariaLabel={`${item.name} 名称`}
+        />
+        <span className="shrink-0 text-[10px] font-normal text-muted-foreground/70">
           {item.kind === "character" ? "角色" : item.kind === "prop" ? "道具" : "地形"}
         </span>
-      </p>
+      </div>
       {rows.map(({ label, field, values }) => (
         <div key={field} className="grid grid-cols-[3.5rem_1fr_1fr_1fr] items-center gap-1 text-xs">
           <span className="text-muted-foreground">{label}</span>
@@ -647,6 +702,17 @@ function BlockingShotEditor({
     setItems(next)
     commit(next, camera)
   }
+
+  /** 重命名布景项：名字写进 artifact 并进撤销栈——后续环节据此在 prompt 里指代对应模型。
+   *  视口 CSS2D 标签与右栏行均取 item.name，随 items 变化自动同步。 */
+  const renameItem = (id: string, name: string) => {
+    const next = items.map((b) => (b.id === id ? { ...b, name } : b))
+    setItems(next)
+    commit(next, camera)
+  }
+
+  /** 行内重命名（双击名字进入）：列表里快速改名，不必先选中再切到「变换」分区 */
+  const [renamingId, setRenamingId] = React.useState<string | null>(null)
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!selected || mapTab !== "preview") return
@@ -1006,9 +1072,31 @@ function BlockingShotEditor({
               selected === b.id ? "border-primary/60 bg-primary/5" : "border-border/60",
             )}
           >
-            <span className="w-16 shrink-0 truncate text-[11px] text-muted-foreground">
-              {b.kind === "character" ? "角色" : "道具"} · {b.name}
-            </span>
+            {renamingId === b.id ? (
+              <span
+                className="w-24 shrink-0"
+                onClick={(e) => e.stopPropagation()} // 编辑中不触发行的选中切换
+                // React 的 onBlur 走 focusout 冒泡：未改名就离开时也要退出编辑态
+                onBlur={() => setRenamingId(null)}
+              >
+                <NameField
+                  value={b.name}
+                  onCommit={(name) => {
+                    renameItem(b.id, name)
+                    setRenamingId(null)
+                  }}
+                  ariaLabel={`${b.name} 名称`}
+                />
+              </span>
+            ) : (
+              <span
+                onDoubleClick={() => setRenamingId(b.id)}
+                title="双击重命名"
+                className="w-24 shrink-0 cursor-text truncate text-[11px] text-muted-foreground"
+              >
+                {b.kind === "character" ? "角色" : "道具"} · {b.name}
+              </span>
+            )}
             <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
               X
               <NumField
@@ -1071,6 +1159,7 @@ function BlockingShotEditor({
         showLabels={showLabels}
         onShowLabelsChange={setShowLabels}
         onChange={(patch) => changeTransform(selectedItem.id, patch)}
+        onRename={(name) => renameItem(selectedItem.id, name)}
       />
     ) : null
 
