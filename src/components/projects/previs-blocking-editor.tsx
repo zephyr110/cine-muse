@@ -894,13 +894,18 @@ function BlockingShotEditor({
     commitLights(lights.map((l) => (l.id === id ? { ...l, position: pose.position, target: pose.target } : l)))
   }
 
+  /** 独占选中一盏光源：视口点击与右栏行点击共用（图元/机位/光源三类选中两两互斥）。 */
+  const selectLightExclusive = (id: string) => {
+    focusLight(id)
+    setSelected(null)
+    onRigSelect?.(null)
+  }
+
   /** 视口光源点击：选中该光源（与图元/机位选中互斥）。
    *  lightClickRef 消歧视口同一手势里紧随的 onSelect(null)（见 rigClickRef 同因） */
   const handleSelectLight = (id: string) => {
     lightClickRef.current = true
-    focusLight(id)
-    setSelected(null)
-    onRigSelect?.(null)
+    selectLightExclusive(id)
   }
 
   /** 变换字段（右栏）提交 → 同一 commit 通路 */
@@ -1438,8 +1443,12 @@ function BlockingShotEditor({
         return (
           <div
             key={light.id}
+            // 点行即选中：位姿输入只在选中时出现，而视口里的光源 glyph 悬在高处（默认 6,8,4）
+            // 常常在画幅之外——不靠这一下，已有光源的灯位就无从精确调整。
+            onClick={() => selectLightExclusive(light.id)}
+            title="点击选中该光源"
             className={cn(
-              "rounded-md border p-2 transition-colors",
+              "cursor-pointer rounded-md border p-2 transition-colors",
               active ? "border-primary/60 bg-primary/5 ring-1 ring-primary/30" : "border-border/60",
             )}
           >
@@ -1453,7 +1462,12 @@ function BlockingShotEditor({
                 type="button"
                 title={`删除 ${light.name}`}
                 aria-label={`删除 ${light.name}`}
-                onClick={() => removeLight(light.id)}
+                onClick={(e) => {
+                  // 子元素先于行触发：不拦住冒泡的话，删完还会把这一行选中，
+                  // 留下指向已删光源的选中态（gizmo 挂在已移除的 rig 上）。
+                  e.stopPropagation()
+                  removeLight(light.id)
+                }}
                 className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
               >
                 <Trash2Icon className="size-3.5" />
