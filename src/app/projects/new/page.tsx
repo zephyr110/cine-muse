@@ -1,10 +1,10 @@
 import { AppShell } from "@/components/app-shell"
-import { NewProjectWizard } from "@/components/projects/new-project-wizard"
+import { NewProjectChat } from "@/components/projects/new-project-chat"
 
 export default function Page() {
   return (
     <AppShell>
-      <NewProjectWizard />
+      <NewProjectChat />
     </AppShell>
   )
 }

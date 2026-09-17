@@ -2,7 +2,7 @@
 
 /**
  * 全局展示元数据：项目状态 / 干预模式的唯一事实来源（label/描述/图标/样式）
- * 供 project-grid、workflow-workspace、new-project-wizard 共用，避免多份拷贝漂移。
+ * 供 project-grid、workflow-workspace、new-project-chat 共用，避免多份拷贝漂移。
  * 说明：纯展示层不引 React 也可以，但图标渲染需要 JSX，故为 .tsx。
  */
 
