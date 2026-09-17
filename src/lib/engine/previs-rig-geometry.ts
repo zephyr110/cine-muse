@@ -1,11 +1,12 @@
 /**
- * 机位 rig 线框几何（纯数值表，无 three / React / DOM 依赖）。
+ * 机位 / 光源 rig 线框几何（纯数值表，无 three / React / DOM 依赖）。
  *
- * 自 previs-3d-viewport 抽出（T5 校准值，REF SceneRoot.tsx 逐值移植），以便表测试
- * （previs-rig-geometry.test.ts）锁定发射值；视口 buildCameraRig 仅消费，不再重定义。
+ * 机位部分自 previs-3d-viewport 抽出（T5 校准值，REF SceneRoot.tsx 逐值移植），以便表测试
+ * （previs-rig-geometry.test.ts）锁定发射值；视口 buildCameraRig / buildLightRig 仅消费，不再重定义。
  *   - cameraBodyWireframeLines：盒体 12 棱 + 镜头倒锥 6 线 + 后部双圆盘 2 线 = 20 线
  *   - cameraFrustumLines：镜头尖 → 16:9 远帧（4 棱 + 远帧 4 边 = 8 段）
  *   - cameraHitArea：全身线框包围盒 + CAM_HIT_PADDING（中心 / 尺寸）
+ *   - lightWireframeLines / lightHitArea：平行光 glyph（环 + 4 平行射线）与其命中盒
  */
 
 // —— 机位 rig 线框常量（REF SceneRoot.tsx 逐值移植；VIEWPORT_CAMERA_VISUAL_SCALE = 0.35） ——
@@ -137,18 +138,61 @@ export function cameraFrustumLines(): [WirePoint, WirePoint][] {
   ]
 }
 
-/** REF getViewportCameraHitArea：全身线框包围盒 + padding（中心 / 尺寸） */
-export function cameraHitArea(): { args: WirePoint; position: WirePoint } {
-  const points = cameraBodyWireframeLines().flat()
+/** 线框包围盒 + padding（中心 / 尺寸）——机位与光源命中盒共用 */
+function hitAreaOf(lines: WirePoint[][], padding: number): { args: WirePoint; position: WirePoint } {
+  const points = lines.flat()
   const axis = (i: 0 | 1 | 2) => points.map((p) => p[i])
   const min = [Math.min(...axis(0)), Math.min(...axis(1)), Math.min(...axis(2))]
   const max = [Math.max(...axis(0)), Math.max(...axis(1)), Math.max(...axis(2))]
   return {
     args: [
-      max[0] - min[0] + CAM_HIT_PADDING * 2,
-      max[1] - min[1] + CAM_HIT_PADDING * 2,
-      max[2] - min[2] + CAM_HIT_PADDING * 2,
+      max[0] - min[0] + padding * 2,
+      max[1] - min[1] + padding * 2,
+      max[2] - min[2] + padding * 2,
     ],
     position: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2],
   }
+}
+
+/** REF getViewportCameraHitArea：全身线框包围盒 + padding（中心 / 尺寸） */
+export function cameraHitArea(): { args: WirePoint; position: WirePoint } {
+  return hitAreaOf(cameraBodyWireframeLines(), CAM_HIT_PADDING)
+}
+
+// —— 光源 rig 线框常量（3D 工具惯例的平行光 glyph：环 + 4 条平行射线） ——
+// 方向仍是局部 +Z（与机位同约定，朝向由 getRigQuaternion 给出）：环即「日面」，
+// 垂直于光线；射线沿 +Z 指向前方 = 光线传播方向，四条平行线给的是「平行光」而非点光的读法。
+/** 光源 glyph 整体缩比（比机位线框略大：光源常高高悬在舞台上方，太小就点不中） */
+export const LIGHT_SCALE = 0.4
+/** 光源线色：琥珀（与机位淡蓝、图元红框均不同色，一眼分辨「这是灯」） */
+export const LIGHT_LINE_COLOR = 0xf59e0b
+export const LIGHT_LINE_OPACITY = 0.95
+/** 命中盒 padding：与机位同值 */
+const LIGHT_HIT_PADDING = 0.06
+/** 环半径（XY 平面） */
+const LIGHT_RING_RADIUS = 0.5 * LIGHT_SCALE
+/** 射线偏离环心的距离（4 条落在环的正上/下/左/右，坐标取整便于表测试锁定） */
+const LIGHT_RAY_OFFSET = 0.3125 * LIGHT_SCALE
+/** 射线沿 +Z：自环内起笔（不与环重叠）到灯前方 */
+const LIGHT_RAY_START_Z = 0.25 * LIGHT_SCALE
+const LIGHT_RAY_END_Z = 3 * LIGHT_SCALE
+
+/** 平行光 rig 线框：1 环 + 4 射线（环 32 段闭环 + 4 线段） */
+export function lightWireframeLines(): WirePoint[][] {
+  const ring = circleWireframeLine({
+    center: [0, 0, 0],
+    radius: LIGHT_RING_RADIUS,
+    plane: "xy",
+  })
+  const dirs: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+  const rays = dirs.map(([u, v]): WirePoint[] => [
+    [u * LIGHT_RAY_OFFSET, v * LIGHT_RAY_OFFSET, LIGHT_RAY_START_Z],
+    [u * LIGHT_RAY_OFFSET, v * LIGHT_RAY_OFFSET, LIGHT_RAY_END_Z],
+  ])
+  return [ring, ...rays]
+}
+
+/** 光源命中盒：glyph 线框包围盒 + padding（拾取代理，与 cameraHitArea 同构） */
+export function lightHitArea(): { args: WirePoint; position: WirePoint } {
+  return hitAreaOf(lightWireframeLines(), LIGHT_HIT_PADDING)
 }

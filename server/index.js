@@ -79,9 +79,23 @@ function uid(prefix) {
   return `${prefix}_${randomUUID().slice(0, 13)}`
 }
 
-/** 启动服务；返回 http.Server（Electron 主进程在 app.quit 时 close） */
-function startServer({ port = DEFAULT_PORT, dbPath, onReady } = {}) {
-  db.initDb(dbPath)
+/** 启动服务；返回 http.Server（Electron 主进程在 app.quit 时 close）
+ *
+ * staticDir：Next 静态导出目录（out/）。传入后本服务同时充当渲染层的同源站点 —— 这是
+ * 桌面端取代 file:// 的关键：`/models/*.glb`、`/_next/*` 等根绝对路径在 file:// 下会解析成
+ * `file:///...` 而 404（静默回退程序化人偶），同源 http 下则天然正确。
+ * 不传（独立运行 `node server/index.js`）时保持纯 API 服务。
+ */
+function startServer({ port = DEFAULT_PORT, dbPath, staticDir, onReady, onError } = {}) {
+  try {
+    db.initDb(dbPath)
+  } catch (err) {
+    // 数据库不可用（磁盘损坏/权限）不阻止 HTTP 服务启动：db 层每个访问器都对 sqlite === null
+    // 有容错（loadStateJson → null，于是 /api/state 404，渲染层回退 localStorage；saveStateJson
+    // → false，由调用方如实上报）。静态站点照常提供，界面起得来且不会静默覆盖 —— 桌面端
+    // loadURL 依赖本服务，若在此抛出则界面根本无从加载。
+    console.error("[cine-server] initDb failed, serving without persistence:", err)
+  }
 
   const app = express()
 
@@ -221,32 +235,47 @@ function startServer({ port = DEFAULT_PORT, dbPath, onReady } = {}) {
 
   const dbFile = dbPath ?? path.join(os.homedir(), ".cine-muse", "cine-muse.db")
   const uploadsDir = path.join(path.dirname(dbFile), "uploads")
-  fs.mkdirSync(uploadsDir, { recursive: true })
+  // 与 initDb 同理：数据目录不可用不该让整个服务起不来（桌面端界面依赖本服务 listen）。
+  // 建不出来就跳过 /uploads 静态服务，上传接口在真正落盘时再如实报错。
+  let uploadsReady = true
+  try {
+    fs.mkdirSync(uploadsDir, { recursive: true })
+  } catch (err) {
+    uploadsReady = false
+    console.error("[cine-server] uploads dir unavailable, asset uploads disabled:", err)
+  }
 
   // 已上传文件静态服务（路径穿越由 express.static 防护；仅本机可访问）
-  app.use("/uploads", express.static(uploadsDir, { maxAge: "7d", fallthrough: false, index: false }))
+  if (uploadsReady) {
+    app.use("/uploads", express.static(uploadsDir, { maxAge: "7d", fallthrough: false, index: false }))
+  }
 
-  const upload = multer({
-    storage: multer.diskStorage({
-      destination: uploadsDir,
-      filename: (_req, file, cb) => {
-        const ext = path.extname(file.originalname).toLowerCase()
-        cb(null, `${randomUUID().slice(0, 13)}${ext}`)
-      },
-    }),
-    limits: { fileSize: MAX_UPLOAD_BYTES },
-    fileFilter: (_req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase()
-      const rule = FILE_TYPE_RULES[EXT_TO_KIND[ext]]
-      if (!rule || !rule.mimes.includes(file.mimetype)) {
-        return cb(new Error("仅支持主流图片 / 视频 / 音频格式"))
-      }
-      cb(null, true)
-    },
-  })
+  // multer.diskStorage 构造时就会 mkdirp(destination)，目录建不出来会直接抛出 —— 同样不能让
+  // 它带倒整个服务。uploadsReady 为假时置空，上传接口另给 503。
+  const upload = uploadsReady
+    ? multer({
+        storage: multer.diskStorage({
+          destination: uploadsDir,
+          filename: (_req, file, cb) => {
+            const ext = path.extname(file.originalname).toLowerCase()
+            cb(null, `${randomUUID().slice(0, 13)}${ext}`)
+          },
+        }),
+        limits: { fileSize: MAX_UPLOAD_BYTES },
+        fileFilter: (_req, file, cb) => {
+          const ext = path.extname(file.originalname).toLowerCase()
+          const rule = FILE_TYPE_RULES[EXT_TO_KIND[ext]]
+          if (!rule || !rule.mimes.includes(file.mimetype)) {
+            return cb(new Error("仅支持主流图片 / 视频 / 音频格式"))
+          }
+          cb(null, true)
+        },
+      })
+    : null
 
   // 上传：multipart/form-data，字段名 file；返回相对 url（前端拼接 API_URL）
   app.post("/api/assets/upload", (req, res) => {
+    if (!upload) return res.status(503).json({ error: "上传目录不可用，无法保存文件" })
     upload.single("file")(req, res, (err) => {
       if (err) {
         const msg = err.code === "LIMIT_FILE_SIZE" ? `文件超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB 上限` : err.message || "上传失败"
@@ -294,12 +323,38 @@ function startServer({ port = DEFAULT_PORT, dbPath, onReady } = {}) {
     res.json({ ok: true })
   })
 
+  /* ---------- 静态导出（桌面端同源站点） ---------- */
+
+  // 注册在全部 /api 路由之后：`out/` 下没有 api 目录，但按序注册可保证 API 永远优先命中。
+  if (staticDir) {
+    const root = path.resolve(staticDir)
+    const indexHtml = path.join(root, "index.html")
+    if (fs.existsSync(indexHtml)) {
+      // redirect:true 把 `/dashboard` 补成 `/dashboard/`，与 trailingSlash 导出的目录式路由一致
+      app.use(express.static(root, { index: "index.html", fallthrough: true, redirect: true }))
+      const notFoundHtml = path.join(root, "404.html")
+      const has404 = fs.existsSync(notFoundHtml)
+      // 未命中的 GET/HEAD 回落到导出的 404 页（存在时），其余交给 Express 默认 404
+      app.use((req, res, next) => {
+        if (!has404 || (req.method !== "GET" && req.method !== "HEAD")) return next()
+        res.status(404).sendFile(notFoundHtml)
+      })
+      console.log(`[cine-server] serving static export from ${root}`)
+    } else {
+      // 未构建时只跳过静态站点，API 仍可用 —— 不因此让整个后端起不来
+      console.warn(`[cine-server] staticDir 下缺少 index.html，跳过静态站点：${root}`)
+    }
+  }
+
   const server = app.listen(port, "127.0.0.1", () => {
-    console.log(`[cine-server] listening on http://127.0.0.1:${port}`)
-    onReady?.(port)
+    // 取实际绑定端口而非入参：传 0 时由内核分配，入参 0 不是可连接的端口
+    const actual = server.address()?.port ?? port
+    console.log(`[cine-server] listening on http://127.0.0.1:${actual}`)
+    onReady?.(actual)
   })
   server.on("error", (err) => {
     console.error(`[cine-server] listen failed on ${port}:`, err.code ?? err.message)
+    onError?.(err)
   })
   return server
 }

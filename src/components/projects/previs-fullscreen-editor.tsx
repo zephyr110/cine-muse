@@ -10,7 +10,7 @@ import { PrevisBlockingEditor } from "./previs-blocking-editor"
 
 /**
  * 空间预演台全屏编辑器：整窗 Dialog（参考 storyai-3d-director-desk 全视口形态），
- * 内部为两栏布局（中画布+三图切换 · 右「预演控制」侧栏：机位/布景项/角色姿态/变换，可收起为图标条）。
+ * 内部为两栏布局（中画布+三图切换 · 右「预演控制」侧栏：机位/光源/布景项/角色姿态/变换，可收起为图标条）。
  * Esc 或「退出编辑」关闭；每次打开镜头重置到 0。
  */
 export function PrevisFullscreenEditor({

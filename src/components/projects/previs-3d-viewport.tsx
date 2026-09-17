@@ -7,16 +7,27 @@ import { TransformControls } from "three/addons/controls/TransformControls.js"
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js"
 
 import { toast } from "@/components/ui/toast"
-import type { BlockingItem, PrevisShot } from "@/lib/types"
+import type { BlockingItem, PrevisLight, PrevisShot } from "@/lib/types"
 import { getRigQuaternion, reframeCamera } from "@/lib/engine/previs-camera"
 import {
   CAM_LINE_COLOR,
   CAM_LINE_OPACITY,
+  LIGHT_LINE_COLOR,
+  LIGHT_LINE_OPACITY,
   cameraBodyWireframeLines,
   cameraFrustumLines,
   cameraHitArea,
+  lightHitArea,
+  lightWireframeLines,
   type WirePoint,
 } from "@/lib/engine/previs-rig-geometry"
+import {
+  fitShadowCamera,
+  lightOwnerId,
+  parseLightOwnerId,
+  stageRadius,
+  type PrevisLightPose,
+} from "@/lib/engine/previs-light"
 import {
   CHARACTER_DEFAULT_TINT,
   createCharacterModel,
@@ -70,6 +81,8 @@ const CLICK_SLOP = 5
 const HOME_VIEW = { position: new THREE.Vector3(8, 8, 10), target: new THREE.Vector3(0, 1, 0), fov: 45 }
 /** 未接线 shots prop 时的稳定空数组（防每渲染新 [] 触发 effect） */
 const EMPTY_SHOTS: PrevisShot[] = []
+/** 同上：无光源的分镜（lights 可选，未接线/旧数据一律走这个稳定引用） */
+const EMPTY_LIGHTS: PrevisLight[] = []
 
 /**
  * 右上角轴向快照卡片（仅 director）：相机置于 target + 轴×当前视距。
@@ -116,16 +129,28 @@ function ancestorShotIndex(obj: THREE.Object3D | null): number | null {
   return null
 }
 
-/** 包围盒线框（仅边缘图导出使用；选中高亮已移除，spec §4.1）：Group 取整体包围盒，Mesh 直接取几何边 */
-function buildBoundsEdges(obj: THREE.Object3D): THREE.LineSegments {
-  const box = new THREE.Box3().setFromObject(obj)
+/** 包围盒线框（边缘图导出 + 多选红框共用）：Group 取整体包围盒，Mesh 直接取几何边。
+ *  世界坐标系（供直接挂场景的子级使用）；调用方须保证 obj 的世界矩阵是最新的。
+ *  precise=true 是硬要求，不是精度偏好：默认路径走 Box3.expandByObject，它对「自带
+ *  boundingBox 属性」的对象（蒙皮网格）会调用 computeBoundingBox() 并把结果**缓存**回
+ *  对象上。该结果落在哪个坐标系取决于 bindMatrixInverse，而它只在 SkinnedMesh.updateMatrixWorld
+ *  里由 matrixWorld 重新同步——expandByObject 走的是 Object3D.updateWorldMatrix，不触发那个
+ *  覆写。于是「角色刚摆好位置、还没渲染」时（创建后同一 tick 内建标签，正是这个状态）缓存的
+ *  盒子是世界系的，raycast 却按局部系比对（SkinnedMesh.raycast 注释「local space」）→
+ *  该角色从此永久点不中，且缓存不会自动失效。precise 路径逐顶点取样，不写缓存。
+ *  导出供回归测试直接调用（同 ownerId / buildCameraRig）。 */
+export function buildBoundsEdges(obj: THREE.Object3D): THREE.LineSegments {
+  obj.updateWorldMatrix(true, true) // 刚改过 transform 的对象其世界矩阵可能尚未刷新
+  const box = new THREE.Box3().setFromObject(obj, true)
   if (obj instanceof THREE.Group) {
     const size = box.getSize(new THREE.Vector3())
     const center = box.getCenter(new THREE.Vector3())
+    const src = new THREE.BoxGeometry(size.x + 0.12, size.y + 0.12, size.z + 0.12)
     const edges = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(size.x + 0.12, size.y + 0.12, size.z + 0.12)),
+      new THREE.EdgesGeometry(src),
       new THREE.LineBasicMaterial({ color: 0xdc2626 }),
     )
+    src.dispose() // EdgesGeometry 只烘焙边，不持有源几何
     edges.position.copy(center)
     return edges
   }
@@ -208,6 +233,32 @@ export function buildCameraRig(): THREE.Group {
   return g
 }
 
+/** 光源 rig：平行光 glyph（环 + 4 条平行射线）+ 隐形命中盒。
+ *  组原点 = 光源位置；局部 +Z = 光线方向（指向 target，朝向由 getRigQuaternion 给出）——
+ *  与机位 rig 同约定，于是摆位/朝向/拖拽/gizmo 全走同一套代码。 */
+export function buildLightRig(): THREE.Group {
+  const g = new THREE.Group()
+  for (const pts of lightWireframeLines()) {
+    const geo = new THREE.BufferGeometry().setFromPoints(pts.map((p) => new THREE.Vector3(...p)))
+    const l = new THREE.Line(
+      geo,
+      new THREE.LineBasicMaterial({ color: LIGHT_LINE_COLOR, transparent: true, opacity: LIGHT_LINE_OPACITY }),
+    )
+    // 与机位线框同理：Line 的默认拾取阈值（1 世界单位）会让装饰线变成「点击黑洞」，
+    // 拾取一律交给下面的隐形命中盒。
+    l.raycast = () => {}
+    g.add(l)
+  }
+  const hitArea = lightHitArea()
+  const hit = new THREE.Mesh(
+    new THREE.BoxGeometry(...hitArea.args),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+  )
+  hit.position.set(...hitArea.position)
+  g.add(hit)
+  return g
+}
+
 /** CSS2D 名字标签元素（居中圆角胶囊） */
 function makeLabelEl(text: string): HTMLElement {
   const el = document.createElement("div")
@@ -217,10 +268,12 @@ function makeLabelEl(text: string): HTMLElement {
   return el
 }
 
-/** 世界包围盒顶 + pad → 挂在 mesh 上的标签所需局部 y（按 mesh 世界 Y 缩放折算；仅对 yaw 类姿态精确，可接受近似） */
-function labelLocalY(mesh: THREE.Object3D, pad = 0.15): number {
+/** 世界包围盒顶 + pad → 挂在 mesh 上的标签所需局部 y（按 mesh 世界 Y 缩放折算；仅对 yaw 类姿态精确，可接受近似）。
+ *  precise=true 同 buildBoundsEdges：默认路径会把蒙皮网格的 computeBoundingBox() 结果缓存回对象，
+ *  既毒化拾取，也让后续每次测量的包围盒顶都取自那份可能错系的缓存。导出供回归测试直接调用。 */
+export function labelLocalY(mesh: THREE.Object3D, pad = 0.15): number {
   mesh.updateWorldMatrix(true, false)
-  const box = new THREE.Box3().setFromObject(mesh)
+  const box = new THREE.Box3().setFromObject(mesh, true)
   const e = mesh.matrixWorld.elements
   const sy = Math.hypot(e[4], e[5], e[6]) // 局部 +Y 经 matrixWorld 的基向量长度
   const originY = e[13] // matrixWorld 平移 Y（= 世界原点 Y）
@@ -257,6 +310,7 @@ export interface PrevisViewportHandle {
  * - 布景项图元 + 地面网格 + OrbitControls 环绕（viewMode=director）
  * - TransformControls（translate/rotate/scale）+ 地面直拖；对象级别 onTransform 帧/终帧派发
  * - 每 shot 一个机位 rig（线框摄像机+视锥+隐形命中盒，点击 = onSelectShot）
+ * - 当前分镜的附加光源：每盏一盏平行光（阴影相机按灯位姿+舞台半径拟合）+ 琥珀色 glyph（可点/可拖/可挂 gizmo）
  * - CSS2D 名字标签（角色头顶 / 机位NN）；右上角轴向视图 gizmo（仅 director）
  * - viewMode=camera：相机置入 shot 机位（position/target/fov），orbit 关闭；返回 director 恢复快照
  * - captureMaps()：按画幅真实渲染 布景/深度/边缘 三图（排除全部 hideFromViewportCapture 对象）
@@ -265,7 +319,11 @@ export interface PrevisViewportProps {
   items: BlockingItem[]
   camera: PrevisShot["camera"]
   selectedId: string | null
-  onSelect: (id: string | null) => void
+  /** 多选全集（末位 = 主选中项 = selectedId）。未传时退化为单选，仅 selectedId 生效。
+   *  非主选中项无 gizmo，故由视口补画红框，否则「加选了几个」在画布上不可见。 */
+  selectedIds?: readonly string[]
+  /** additive=true 表示按住了 Cmd/Ctrl/Shift —— 点选语义变为「加选/减选」而非单选 */
+  onSelect: (id: string | null, additive?: boolean) => void
   /** 全量分镜表（editor 接线后传入；未传入时退化为单镜头旧 props） */
   shots?: PrevisShot[]
   shotIndex?: number
@@ -281,17 +339,27 @@ export interface PrevisViewportProps {
   onMoveRig?: (index: number, camera: PrevisShot["camera"], commit: boolean) => void
   /** editor 驱动的 rig 选中（值 `__cam_{i}`）；未传时由视口点击自理（不占用 selectedId） */
   selectedShotId?: string | null
+  /** 当前分镜的附加光源（仅本分镜点亮舞台——灯光是分镜级的，别的镜头的光不进这个场景） */
+  lights?: PrevisLight[]
+  /** editor 驱动的光源选中（未传时由视口点击自理） */
+  selectedLightId?: string | null
+  /** 光源 rig 点击 → 选中该光源（与图元/机位选中互斥，由 editor 记账） */
+  onSelectLight?: (id: string) => void
+  /** 光源位姿回写：commit=false 为拖拽帧、true 为终帧（与 onMoveRig 同口径） */
+  onMoveLight?: (id: string, pose: PrevisLightPose, commit: boolean) => void
 }
 
 export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewportProps>(
   function PrevisViewport(props, ref) {
     const {
-      items, camera, selectedId, onSelect,
+      items, camera, selectedId, selectedIds, onSelect,
       shots = EMPTY_SHOTS, shotIndex = 0,
       viewMode = "director" as ViewMode,
       transformMode = "translate" as TransformMode,
       showLabels = true,
       selectedShotId,
+      lights = EMPTY_LIGHTS,
+      selectedLightId,
     } = props
     const hostRef = React.useRef<HTMLDivElement | null>(null)
     const stateRef = React.useRef<{
@@ -301,10 +369,22 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       controls: OrbitControls
       itemMeshes: Map<string, THREE.Object3D>
       rigGroup: THREE.Group
+      /** 光源 rig 层（glyph；同 rigGroup，仅导演态可见且不进导出） */
+      lightGroup: THREE.Group
+      /** 光源 id → 其 THREE.DirectionalLight（真正的灯，不进 hideFromViewportCapture） */
+      lightObjects: Map<string, THREE.DirectionalLight>
+      /** 光源 id → 其 glyph 组（拾取/拖拽/gizmo 的落点） */
+      lightRigs: Map<string, THREE.Group>
+      /** 光源 id → 名字标签 */
+      lightLabels: Map<string, CSS2DObject>
+      /** 多选红框层（非主选中项；世界坐标，随 items 变化重建） */
+      outlineGroup: THREE.Group
       labelLayer: THREE.Group
       rigLabels: Map<number, CSS2DObject>
       gizmo: TransformControls
       gizmoActive: boolean
+      /** 手柄上按下的起点（TransformControls 抢走 gesture 时记下）：pointerup 未拖则补一次拾取 */
+      gizmoDown: { x: number; y: number; moved: boolean } | null
       raycaster: THREE.Raycaster
       viewAspect: number | null
       directorView: { pos: THREE.Vector3; target: THREE.Vector3; fov: number } | null
@@ -317,16 +397,20 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
     } | null>(null)
 
     const propsRef = React.useRef<ViewportRuntimeProps>({
-      items, camera, selectedId, onSelect,
+      items, camera, selectedId, selectedIds, onSelect,
       shots: [], shotIndex: 0, viewMode: "director", transformMode: "translate", showLabels: true,
     })
     propsRef.current = {
-      items, camera, selectedId, onSelect, shots,
+      items, camera, selectedId, selectedIds, onSelect, shots,
       shotIndex, viewMode, transformMode, showLabels,
       onSelectShot: props.onSelectShot,
       onTransform: props.onTransform,
       onMoveRig: props.onMoveRig,
       selectedShotId: props.selectedShotId,
+      lights,
+      selectedLightId,
+      onSelectLight: props.onSelectLight,
+      onMoveLight: props.onMoveLight,
     }
 
     /** 导出/环绕所用的机位：shots 接线后取 shots[shotIndex]，否则退化为旧 camera prop */
@@ -342,8 +426,14 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
     const [selectedRigIndex, setSelectedRigIndex] = React.useState<number | null>(null)
     /** rig 最近一次 translate/rotate 模式（scale 对 rig 禁用时回退用） */
     const rigModeRef = React.useRef<"translate" | "rotate">("translate")
-    /** 「机位不支持缩放」toast 去重键：同一 rig 选中周期只提示一次（防每帧 spam） */
+    /** 「机位/光源不支持缩放」toast 去重键：同一选中周期只提示一次（防每帧 spam） */
     const scaleToastKeyRef = React.useRef<string | null>(null)
+
+    // —— 光源选中（与 rig 同理：独立于 selectedId，三类选中互斥） ——
+    const [selectedLightIdState, setSelectedLightIdState] = React.useState<string | null>(null)
+    /** 拖灯时抓住的「position − target」偏移：帧间保持不变 = 只平移不改照射方向。
+     *  必须在按下那一瞬定格——拖拽帧会回写 position，若逐帧现算偏移，delta 会逐帧吃掉自己。 */
+    const lightGrabRef = React.useRef<{ id: string; offset: [number, number, number] } | null>(null)
 
     // —— editor 驱动 rig 选中：selectedShotId = `__cam_{i}`（未传时不接管视口点击选中） ——
     React.useEffect(() => {
@@ -351,6 +441,12 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       const m = selectedShotId ? /^__cam_(\d+)$/.exec(selectedShotId) : null
       setSelectedRigIndex(m ? Number(m[1]) : null)
     }, [selectedShotId])
+
+    // —— editor 驱动光源选中（未传时不接管视口点击选中）；仅采纳本分镜真实存在的 id ——
+    React.useEffect(() => {
+      if (selectedLightId === undefined) return
+      setSelectedLightIdState(selectedLightId)
+    }, [selectedLightId])
 
     // —— UE4 素体就绪代数：初始渲染一律程序化；ensureUe4Model 成功后 +1 → 触发一次 items 重建 ——
     // 初始值读 isUe4ModelReady()：GLB 已缓存（如视口重挂载）时直接以 UE4 起步，避免二次重建。
@@ -410,6 +506,18 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       ground.userData.itemId = "__ground__"
       ground.userData.hideFromViewportCapture = true
       scene.add(ground)
+      // 阴影承接面：地面是 MeshBasicMaterial（着色器里没有 shadowmap 分支，收不到阴影），
+      // 于是附加光源投在地面的阴影会整片消失。这里另铺一层纯阴影材质（ShadowMaterial 只画阴影、
+      // 自身不可见），夹在地面与网格之间，两者都不被顶掉，也不进画布导出。
+      const shadowCatcher = new THREE.Mesh(
+        new THREE.PlaneGeometry(200, 200),
+        new THREE.ShadowMaterial({ opacity: 0.4 }),
+      )
+      shadowCatcher.rotation.x = -Math.PI / 2
+      shadowCatcher.position.y = -0.018
+      shadowCatcher.receiveShadow = true
+      shadowCatcher.userData.hideFromViewportCapture = true
+      scene.add(shadowCatcher)
       const grid = new THREE.GridHelper(200, 200, 0x2a4065, 0x2a4065)
       ;(grid.material as THREE.Material).transparent = true
       ;(grid.material as THREE.Material).opacity = 0.9
@@ -428,6 +536,17 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       const rigGroup = new THREE.Group()
       rigGroup.userData.hideFromViewportCapture = true
       scene.add(rigGroup)
+
+      // 光源 rig 层：glyph 同机位（director 模式可见，导出排除）；真正的 DirectionalLight 挂场景根，
+      // 不能进本层——否则导出时会连同 glyph 一起被隐藏，画面失去全部附加光。
+      const lightGroup = new THREE.Group()
+      lightGroup.userData.hideFromViewportCapture = true
+      scene.add(lightGroup)
+
+      // 多选红框层（非主选中项）：与导出/拾取无关，随选中集重建（导出排除）
+      const outlineGroup = new THREE.Group()
+      outlineGroup.userData.hideFromViewportCapture = true
+      scene.add(outlineGroup)
 
       // CSS2D 标签：独立 DOM 层天然不进 canvas 导出
       const labelLayer = new THREE.Group()
@@ -475,8 +594,12 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       const st = {
         renderer, scene, camera, controls,
         itemMeshes: new Map<string, THREE.Object3D>(),
-        rigGroup, labelLayer, rigLabels: new Map<number, CSS2DObject>(),
-        gizmo, gizmoActive: false,
+        rigGroup, outlineGroup, labelLayer, rigLabels: new Map<number, CSS2DObject>(),
+        lightGroup,
+        lightObjects: new Map<string, THREE.DirectionalLight>(),
+        lightRigs: new Map<string, THREE.Group>(),
+        lightLabels: new Map<string, CSS2DObject>(),
+        gizmo, gizmoActive: false, gizmoDown: null,
         raycaster: new THREE.Raycaster(),
         viewAspect: null as number | null,
         directorView: null as { pos: THREE.Vector3; target: THREE.Vector3; fov: number } | null,
@@ -570,6 +693,30 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
         )
         return
       }
+      const lightId = parseLightOwnerId(id)
+      if (lightId) {
+        const lights = propsRef.current.lights ?? EMPTY_LIGHTS
+        const index = lights.findIndex((l) => l.id === lightId)
+        if (index < 0) return
+        const light = lights[index]
+        // 与机位同一套语义：局部 +Z = 光线方向，rotate 时 target 沿新 forward 等距重算
+        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(obj.quaternion).normalize()
+        // 复用机位的重算：视距保持 → 只转朝向不改灯距，强度/阴影范围不因旋转跳变
+        const next = reframeCamera(
+          { position: light.position, target: light.target },
+          [obj.position.x, obj.position.y, obj.position.z],
+          [forward.x, forward.y, forward.z],
+        )
+        const round2 = (v: number) => Math.round(v * 100) / 100
+        const pose: PrevisLightPose = {
+          position: [round2(next.position[0]), round2(next.position[1]), round2(next.position[2])],
+          target: [round2(next.target[0]), round2(next.target[1]), round2(next.target[2])],
+        }
+        previewLightPose(lightId, pose)
+        syncLightLabel(light, index, propsRef.current.viewMode === "director")
+        propsRef.current.onMoveLight?.(lightId, pose, commit)
+        return
+      }
       if (!id || id === "__ground__") return
       const round2 = (v: number) => Math.round(v * 100) / 100
       emitTransform(id, {
@@ -652,6 +799,26 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [items, selectedId, ue4Epoch])
+
+    // —— 多选红框：非主选中项（末位是主选中项，归 gizmo 管）——只给「没有别的反馈」的那些画框，
+    //    否则加选完在画布上看不出选了谁。世界坐标包围盒 → 挂场景（不随父变换），故随 items 重建；
+    //    拖拽中只有主选中项在动，而它不在本层，无需逐帧跟随。
+    React.useEffect(() => {
+      const st = stateRef.current
+      if (!st) return
+      const ids = propsRef.current.selectedIds ?? (selectedId ? [selectedId] : [])
+      const others = ids.slice(0, -1) // 末位 = 主选中项
+      for (const o of [...st.outlineGroup.children]) {
+        st.outlineGroup.remove(o)
+        const line = o as THREE.LineSegments
+        line.geometry.dispose()
+        ;(line.material as THREE.Material).dispose()
+      }
+      for (const id of others) {
+        const mesh = st.itemMeshes.get(id)
+        if (mesh) st.outlineGroup.add(buildBoundsEdges(mesh))
+      }
+    }, [selectedId, selectedIds, items, ue4Epoch])
 
     // —— CSS2D 角色名字标签（头顶 Box3 top + 0.15；跟随图元拖拽/缩放实时重挂） ——
     React.useEffect(() => {
@@ -740,6 +907,128 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       }
     }, [shots, viewMode, showLabels])
 
+    /** 拖拽帧的光源即时预览：影子是光源的「可见形态」，若只等终帧落库再更新，
+     *  拖动过程就是「glyph 走了、影子不动」。故帧内直接改灯本身（含阴影相机拟合），
+     *  终帧仍由 editor 回写的 lights prop 统一收敛（与 rig 的视觉随动同口径）。 */
+    function previewLightPose(id: string, pose: PrevisLightPose) {
+      const st = stateRef.current
+      const obj = st?.lightObjects.get(id)
+      if (!st || !obj) return
+      obj.position.set(...pose.position)
+      obj.target.position.set(...pose.target)
+      obj.target.updateMatrixWorld()
+      const fit = fitShadowCamera(pose, stageRadius(propsRef.current.items, pose.target))
+      const sc = obj.shadow.camera
+      sc.left = -fit.halfExtent
+      sc.right = fit.halfExtent
+      sc.top = fit.halfExtent
+      sc.bottom = -fit.halfExtent
+      sc.near = fit.near
+      sc.far = fit.far
+      sc.updateProjectionMatrix()
+      const rig = st.lightRigs.get(id)
+      if (rig) {
+        rig.position.set(...pose.position)
+        rig.quaternion.copy(getRigQuaternion(pose.position, pose.target))
+      }
+    }
+
+    /** 光源 id → 它在本分镜的序号（用于「光源NN」标签兜底；名字以数据为准） */
+    function syncLightLabel(light: PrevisLight, index: number, director: boolean) {
+      const st = stateRef.current
+      if (!st) return
+      const g = st.lightRigs.get(light.id)
+      if (!g) return
+      let label = st.lightLabels.get(light.id)
+      if (!label) {
+        label = new CSS2DObject(makeLabelEl(light.name || `光源${String(index + 1).padStart(2, "0")}`))
+        st.labelLayer.add(label)
+        st.lightLabels.set(light.id, label)
+      }
+      label.element.textContent = light.name || `光源${String(index + 1).padStart(2, "0")}`
+      label.position.set(g.position.x, g.position.y + RIG_LABEL_OFFSET_Y, g.position.z)
+      label.visible = director && propsRef.current.showLabels === true
+    }
+
+    // —— 光源同步（每光源 = 一盏 DirectionalLight + 一个 glyph + 「光源NN」标签） ——
+    //  DirectionalLight 的照射方向 = position → target，与机位同约定；故 target 必须挂进场景
+    //  （three 只在 target 属于场景图时才用它的世界矩阵）。
+    React.useEffect(() => {
+      const st = stateRef.current
+      if (!st) return
+      const lights = propsRef.current.lights ?? EMPTY_LIGHTS
+      const director = propsRef.current.viewMode === "director"
+      const alive = new Set<string>()
+      // 舞台半径按光源 target 取（target 挪远也要罩住布景，否则阴影区被裁掉）
+      const items = propsRef.current.items
+      lights.forEach((light, i) => {
+        alive.add(light.id)
+        const radius = stageRadius(items, light.target)
+        let obj = st.lightObjects.get(light.id)
+        if (!obj) {
+          obj = new THREE.DirectionalLight(0xffffff, 1)
+          obj.userData.itemId = lightOwnerId(light.id)
+          obj.shadow.mapSize.set(1024, 1024)
+          st.scene.add(obj)
+          st.scene.add(obj.target) // 方向光的 target 需在场景里才生效
+          st.lightObjects.set(light.id, obj)
+        }
+        obj.position.set(...light.position)
+        obj.target.position.set(...light.target)
+        obj.target.updateMatrixWorld()
+        obj.intensity = light.intensity
+        obj.color.set(light.color ?? "#ffffff")
+        obj.castShadow = light.castShadow
+        // 阴影相机按光源位姿 + 舞台半径拟合（不复用主光的 ±10 硬编码盒）
+        const fit = fitShadowCamera({ position: light.position, target: light.target }, radius)
+        const sc = obj.shadow.camera
+        sc.left = -fit.halfExtent
+        sc.right = fit.halfExtent
+        sc.top = fit.halfExtent
+        sc.bottom = -fit.halfExtent
+        sc.near = fit.near
+        sc.far = fit.far
+        sc.updateProjectionMatrix()
+        let rig = st.lightRigs.get(light.id)
+        if (!rig) {
+          rig = buildLightRig()
+          rig.userData.itemId = lightOwnerId(light.id)
+          st.lightGroup.add(rig)
+          st.lightRigs.set(light.id, rig)
+        }
+        rig.position.set(...light.position)
+        rig.quaternion.copy(getRigQuaternion(light.position, light.target))
+        syncLightLabel(light, i, director)
+      })
+      for (const [id, obj] of [...st.lightObjects]) {
+        if (alive.has(id)) continue
+        st.scene.remove(obj)
+        st.scene.remove(obj.target)
+        obj.dispose() // 阴影贴图等 GPU 资源
+        st.lightObjects.delete(id)
+      }
+      for (const [id, rig] of [...st.lightRigs]) {
+        if (alive.has(id)) continue
+        disposeObject(rig)
+        st.lightGroup.remove(rig)
+        st.lightRigs.delete(id)
+      }
+      for (const [id, label] of [...st.lightLabels]) {
+        if (alive.has(id)) continue
+        removeCSS2DLabel(label)
+        st.labelLayer.remove(label)
+        st.lightLabels.delete(id)
+      }
+      st.lightGroup.visible = director
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [lights, items, viewMode, showLabels, ue4Epoch])
+
+    // —— 光源被删/切换分镜后清掉悬空选中（否则 gizmo 挂在一个已不在场景里的 rig 上） ——
+    React.useEffect(() => {
+      const lights = propsRef.current.lights ?? EMPTY_LIGHTS
+      setSelectedLightIdState((cur) => (cur && !lights.some((l) => l.id === cur) ? null : cur))
+    }, [lights])
+
     // —— 导演 / 机位视角 + fov / aspect ——
     React.useEffect(() => {
       const st = stateRef.current
@@ -785,37 +1074,41 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       }
     }, [viewMode, shotIndex, shots])
 
-    // —— gizmo 附着与模式同步（图元 mesh 或机位 rig 组；items/rig 重建后重挂） ——
+    // —— gizmo 附着与模式同步（图元 mesh / 机位 rig / 光源 rig；任一重建后重挂） ——
     React.useEffect(() => {
       const st = stateRef.current
       if (!st) return
       const mode = propsRef.current.transformMode ?? "translate"
+      const director = propsRef.current.viewMode === "director"
       // rig 仅导演态可选/可挂（camera 视角下 rig 隐藏，不残留 gizmo）
       const rig =
-        propsRef.current.viewMode === "director" && selectedRigIndex != null
+        director && selectedRigIndex != null
           ? (st.rigGroup.children[selectedRigIndex] as THREE.Group | undefined) ?? null
           : null
-      const mesh = !rig && selectedId ? st.itemMeshes.get(selectedId) : null
-      const target = rig ?? (mesh && mesh.userData.itemId && mesh.userData.itemId !== "__ground__" ? mesh : null)
+      const lightRig = rig ? null : (selectedLightIdState && st.lightRigs.get(selectedLightIdState)) || null
+      const mesh = !rig && !lightRig && selectedId ? st.itemMeshes.get(selectedId) : null
+      const target =
+        rig ?? lightRig ?? (mesh && mesh.userData.itemId && mesh.userData.itemId !== "__ground__" ? mesh : null)
       if (target) {
         if (st.gizmo.object !== target) st.gizmo.attach(target)
       } else if (st.gizmo.object) {
         st.gizmo.detach()
       }
-      // scale 对 rig 禁用（spec §4.2）：保持最近 translate/rotate + 一次性 toast
-      if (rig && mode === "scale") {
+      // scale 对 rig/光源禁用（spec §4.2）：保持最近 translate/rotate + 一次性 toast
+      //（键分命名空间：机位与光源各自的选中周期独立计数，否则来回切换不再提示）
+      if ((rig || lightRig) && mode === "scale") {
         st.gizmo.setMode(rigModeRef.current)
-        const key = String(selectedRigIndex)
+        const key = rig ? `rig:${selectedRigIndex}` : `light:${selectedLightIdState}`
         if (scaleToastKeyRef.current !== key) {
           scaleToastKeyRef.current = key
-          toast.add({ title: "机位不支持缩放", type: "warning" })
+          toast.add({ title: rig ? "机位不支持缩放" : "光源不支持缩放", type: "warning" })
         }
       } else {
         scaleToastKeyRef.current = null
-        if (rig) rigModeRef.current = mode === "rotate" ? "rotate" : "translate"
+        if (rig || lightRig) rigModeRef.current = mode === "rotate" ? "rotate" : "translate"
         st.gizmo.setMode(mode)
       }
-    }, [selectedId, selectedRigIndex, transformMode, viewMode, items, shots, ue4Epoch])
+    }, [selectedId, selectedRigIndex, selectedLightIdState, transformMode, viewMode, items, shots, lights, ue4Epoch])
 
     // —— 拾取修复与手势仲裁（点击 vs ≥5px 拖拽；gizmo 激活时本通道让位） ——
     const pickAt = (clientX: number, clientY: number): { id: string | null; obj: THREE.Object3D | null } => {
@@ -828,8 +1121,21 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       )
       st.raycaster.setFromCamera(ndc, st.camera)
       const targets: THREE.Object3D[] = [...st.itemMeshes.values()]
-      if (propsRef.current.viewMode === "director") targets.push(st.rigGroup) // rig 仅在导演态可点
-      const hit = st.raycaster.intersectObjects(targets, true).find((h) => ownerId(h.object))
+      // rig/光源仅在导演态可点（机位视角下它们被隐藏，命中它们等于点空）
+      if (propsRef.current.viewMode === "director") targets.push(st.rigGroup, st.lightGroup)
+      // 蒙皮网格的 boundingBox 一旦被缓存就不会自动失效，而它的坐标系与 raycast 期望的
+      // 局部空间不一致（见 buildBoundsEdges 注释）→ 命中率恒为 0，角色从此点不中。
+      // 拾取前清掉：box 为 null 时 raycast 跳过该早退，直接走三角形测试（包围球照常生效）。
+      for (const t of targets) {
+        t.traverse((o) => {
+          if (!(o as THREE.SkinnedMesh).isSkinnedMesh) return
+          // three 的类型把 boundingBox 声明为非空 Box3，运行时初值其实是 null，raycast 也
+          // 明确支持 null = 跳过该早退——所以这里按真实类型改写。
+          ;(o as unknown as { boundingBox: THREE.Box3 | null }).boundingBox = null
+        })
+      }
+      const isect = st.raycaster.intersectObjects(targets, true)
+      const hit = isect.find((h) => ownerId(h.object))
       if (!hit) return { id: null, obj: null }
       return { id: ownerId(hit.object), obj: hit.object }
     }
@@ -838,50 +1144,138 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       const st = stateRef.current
       if (!st) return
       if (e.button !== 0) return
+      // 手柄命中：TransformControls 的原生 pointerdown 挂在 canvas 上、先于 React 委托到本容器的
+      // 处理器触发，gizmoActive 此刻已置位——本次手势拿不到 downAt。先记下起点，pointerup 未拖
+      // 则由 endDrag 补一次拾取（点手柄 = 点手柄后面的东西，见那里的说明）。
+      if (st.gizmoActive && !st.dragging && e.target === st.renderer.domElement) {
+        st.gizmoDown = { x: e.clientX, y: e.clientY, moved: false }
+        return
+      }
       if (st.gizmoActive || st.dragging) return
       // DOM 覆盖层（轴向 gizmo 按钮等）不进入拾取/拖拽
       if (e.target !== st.renderer.domElement) return
       const pick = pickAt(e.clientX, e.clientY)
       const id = pick.id
       st.downAt = { x: e.clientX, y: e.clientY, id, obj: pick.obj, moved: false }
-      // 落在图元上：先禁用轨道（防拖动期间视角被带跑），未过阈值不算拖拽
+      // 落在图元/光源上：先禁用轨道（防拖动期间视角被带跑），未过阈值不算拖拽
+      //（机位 rig 除外：它靠 gizmo 摆位，直拖会与「轨道环绕视角」的肌肉记忆打架）
       st.dragArmed = id != null && id !== "__ground__" && id !== "__camera__"
       if (st.dragArmed) st.controls.enabled = false
     }
 
     const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
       const st = stateRef.current
-      if (!st || !st.downAt) return
+      if (!st) return
+      // gizmo 手势：只跟踪位移（拖拽由 TransformControls 自己处理），供 pointerup 判定点击
+      if (st.gizmoDown) {
+        if (!st.gizmoDown.moved && Math.hypot(e.clientX - st.gizmoDown.x, e.clientY - st.gizmoDown.y) > CLICK_SLOP) {
+          st.gizmoDown.moved = true
+        }
+        return
+      }
+      if (!st.downAt) return
       if (st.gizmoActive) return
       if (!st.downAt.moved && Math.hypot(e.clientX - st.downAt.x, e.clientY - st.downAt.y) > CLICK_SLOP) {
         st.downAt.moved = true
       }
       if (!st.dragArmed || !st.downAt.moved) return
       if (!st.dragging) {
-        // 过阈值 → 进入拖拽：选中 + 指针捕获（图元拖拽同时取消 rig 选中，gizmo 让位图元）
+        // 过阈值 → 进入拖拽：选中 + 指针捕获（三类选中互斥，gizmo 只留给被拖的那一类）
         const id = st.downAt.id
         if (!id) return
+        const lid = parseLightOwnerId(id)
         setSelectedRigIndex(null)
-        propsRef.current.onSelect(id)
+        if (lid) {
+          setSelectedLightIdState(lid)
+          propsRef.current.onSelectLight?.(lid)
+          propsRef.current.onSelect(null)
+          const light = (propsRef.current.lights ?? EMPTY_LIGHTS).find((l) => l.id === lid)
+          lightGrabRef.current = light
+            ? {
+                id: lid,
+                offset: [
+                  light.position[0] - light.target[0],
+                  light.position[1] - light.target[1],
+                  light.position[2] - light.target[2],
+                ],
+              }
+            : null
+        } else {
+          setSelectedLightIdState(null)
+          propsRef.current.onSelect(id)
+        }
         st.dragId = id
         st.dragging = true
         st.renderer.domElement.setPointerCapture(e.pointerId)
       }
-      const mesh = st.dragId ? st.itemMeshes.get(st.dragId) : null
-      if (!mesh) return // 拖拽中目标被移除 → 等 endDrag 收尾
-      // 沿过 mesh 自身 y 的水平面走（角色=脚底高，prop/terrain=中心高，不落回 0）
+      const lightId = st.dragId ? parseLightOwnerId(st.dragId) : null
+      const dragObj = lightId ? st.lightRigs.get(lightId) : st.dragId ? st.itemMeshes.get(st.dragId) : null
+      if (!dragObj) return // 拖拽中目标被移除 → 等 endDrag 收尾
+      // 沿过对象自身 y 的水平面走（角色=脚底高，prop/terrain=中心高，光源=灯高，不落回 0）
       const rect = st.renderer.domElement.getBoundingClientRect()
       const ndc = new THREE.Vector2(
         ((e.clientX - rect.left) / rect.width) * 2 - 1,
         -((e.clientY - rect.top) / rect.height) * 2 + 1,
       )
       st.raycaster.setFromCamera(ndc, st.camera)
-      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -mesh.position.y)
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -dragObj.position.y)
       const pt = new THREE.Vector3()
-      if (st.raycaster.ray.intersectPlane(plane, pt)) {
-        mesh.position.x = pt.x
-        mesh.position.z = pt.z
-        emitTransform(st.dragId!, { position: [Math.round(pt.x * 100) / 100, Math.round(pt.y * 100) / 100, Math.round(pt.z * 100) / 100] }, false)
+      if (!st.raycaster.ray.intersectPlane(plane, pt)) return
+      const round2 = (v: number) => Math.round(v * 100) / 100
+      if (lightId) {
+        // 光源平移 = 方位角不变：target 按按下瞬间定格的偏移同步走（拖灯不该顺手改照射方向）
+        const lights = propsRef.current.lights ?? EMPTY_LIGHTS
+        const index = lights.findIndex((l) => l.id === lightId)
+        if (index < 0) return
+        const light = lights[index]
+        const grab = lightGrabRef.current
+        if (!grab || grab.id !== lightId) return
+        const pose: PrevisLightPose = {
+          position: [round2(pt.x), round2(pt.y), round2(pt.z)],
+          target: [
+            round2(pt.x - grab.offset[0]),
+            round2(pt.y - grab.offset[1]),
+            round2(pt.z - grab.offset[2]),
+          ],
+        }
+        previewLightPose(lightId, pose)
+        syncLightLabel(light, index, propsRef.current.viewMode === "director")
+        propsRef.current.onMoveLight?.(lightId, pose, false)
+        return
+      }
+      dragObj.position.x = pt.x
+      dragObj.position.z = pt.z
+      emitTransform(st.dragId!, { position: [round2(pt.x), round2(pt.y), round2(pt.z)] }, false)
+    }
+
+    /** 点击选中语义（图元 / 机位 rig / 光源三类两两互斥；空点 = 取消全部）。
+     *  pointerup 的正常点击与「手柄上按下但未拖动」的补拾取共用。 */
+    const applyClickSelection = (id: string | null, obj: THREE.Object3D | null, additive: boolean) => {
+      const lid = parseLightOwnerId(id)
+      if (id === "__camera__" && obj) {
+        // rig 点击：选中 rig（gizmo 挂 rig 组）+ 切换分镜；同时清空图元/光源选中（不占用 selectedId）
+        const shot = ancestorShotIndex(obj)
+        if (shot != null) {
+          setSelectedRigIndex(shot)
+          propsRef.current.onSelectShot?.(shot)
+        }
+        setSelectedLightIdState(null)
+        propsRef.current.onSelect(null)
+      } else if (lid) {
+        // 光源点击：选中该光源（gizmo 挂光源 glyph）+ 清空图元/机位选中
+        setSelectedRigIndex(null)
+        setSelectedLightIdState(lid)
+        propsRef.current.onSelectLight?.(lid)
+        propsRef.current.onSelect(null)
+      } else if (id && id !== "__ground__") {
+        setSelectedRigIndex(null)
+        setSelectedLightIdState(null)
+        propsRef.current.onSelect(id, additive)
+      } else {
+        // 空点：取消图元/rig/光源选中（spec §4.4）
+        setSelectedRigIndex(null)
+        setSelectedLightIdState(null)
+        propsRef.current.onSelect(null)
       }
     }
 
@@ -890,48 +1284,57 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
       const st = stateRef.current
       if (!st) return
       const wasDragging = st.dragging
+      const grab = lightGrabRef.current
       if (wasDragging) {
         st.dragging = false
         const id = st.dragId
         st.dragId = null
         st.dragArmed = false
+        lightGrabRef.current = null
         // 恢复轨道：camera 模式或 gizmo 激活时保持禁用（与 dragging-changed handler 同一判定）
         st.controls.enabled = propsRef.current.viewMode !== "camera" && !st.gizmoActive
         if (st.renderer.domElement.hasPointerCapture(e.pointerId)) {
           st.renderer.domElement.releasePointerCapture(e.pointerId)
         }
         // 直拖终帧提交
-        const mesh = id ? st.itemMeshes.get(id) : null
-        if (id && mesh) {
+        const r2 = (v: number) => Math.round(v * 100) / 100
+        const lightId = id ? parseLightOwnerId(id) : null
+        const moved = lightId ? st.lightRigs.get(lightId) : id ? st.itemMeshes.get(id) : null
+        if (lightId && moved && grab && grab.id === lightId) {
+          // 光源终帧：位置取自 glyph、target 由抓取偏移反推——editor 侧丢弃拖拽帧（与 rig 同口径），
+          // 若这里回读 props 里的 target 就会拿到拖动前的旧值，把「平移」变成「转向」。
+          propsRef.current.onMoveLight?.(
+            lightId,
+            {
+              position: [r2(moved.position.x), r2(moved.position.y), r2(moved.position.z)],
+              target: [
+                r2(moved.position.x - grab.offset[0]),
+                r2(moved.position.y - grab.offset[1]),
+                r2(moved.position.z - grab.offset[2]),
+              ],
+            },
+            true,
+          )
+        } else if (id && moved) {
           emitTransform(id, {
-            position: [
-              Math.round(mesh.position.x * 100) / 100,
-              Math.round(mesh.position.y * 100) / 100,
-              Math.round(mesh.position.z * 100) / 100,
-            ],
+            position: [r2(moved.position.x), r2(moved.position.y), r2(moved.position.z)],
           }, true)
         }
       }
+      // 按住 Cmd/Ctrl/Shift = 加选/减选（多选）；机位与空点不参与多选
+      const additive = e.metaKey || e.ctrlKey || e.shiftKey
       // 点选语义：未拖（<5px）且未被系统取消 → 点击
       if (!cancelled && st.downAt && !st.downAt.moved) {
-        const { id, obj } = st.downAt
-        if (id === "__camera__" && obj) {
-          // rig 点击：选中 rig（gizmo 挂 rig 组）+ 切换分镜；同时清空图元选中（不占用 selectedId）
-          const shot = ancestorShotIndex(obj)
-          if (shot != null) {
-            setSelectedRigIndex(shot)
-            propsRef.current.onSelectShot?.(shot)
-          }
-          propsRef.current.onSelect(null)
-        } else if (id && id !== "__ground__") {
-          setSelectedRigIndex(null)
-          propsRef.current.onSelect(id)
-        } else {
-          // 空点：取消图元选中 + 取消 rig 选中（spec §4.4）
-          setSelectedRigIndex(null)
-          propsRef.current.onSelect(null)
-        }
+        applyClickSelection(st.downAt.id, st.downAt.obj, additive)
       }
+      // 手柄命中但未拖动 = 点击：补一次拾取，选中手柄后面的东西（手柄是半透明的线，
+      // 盖住角色身体时点它应当落到角色身上）。仅在确实命中了可选中对象时才动选中态——
+      // 旋转手柄的圆环比角色宽得多，点空处不该把已有选中清掉。
+      if (!cancelled && st.gizmoDown && !st.gizmoDown.moved) {
+        const pick = pickAt(e.clientX, e.clientY)
+        if (pick.id && pick.id !== "__ground__") applyClickSelection(pick.id, pick.obj, additive)
+      }
+      st.gizmoDown = null
       st.downAt = null
       st.dragArmed = false
       // 未拖过阈值的收尾同样按 camera/gizmo 判定恢复（camera 模式不重开环绕）
@@ -941,7 +1344,9 @@ export const PrevisViewport = React.forwardRef<PrevisViewportHandle, PrevisViewp
     /** 已 armed 但未过阈值的指针移出画布（未捕获）→ 中止本次手势，避免轨道被锁死 */
     const abortArmedGesture = () => {
       const st = stateRef.current
-      if (!st || st.dragging || !st.dragArmed) return
+      if (!st || st.dragging) return
+      st.gizmoDown = null // gizmo 手势走丢时一并作废（下次 pointerup 不再补拾取）
+      if (!st.dragArmed) return
       st.downAt = null
       st.dragArmed = false
       // camera 模式 / gizmo 激活下维持禁用

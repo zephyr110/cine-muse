@@ -69,9 +69,23 @@ export interface BlockingItem {
   controls?: Record<string, number>
 }
 
+/** 镜头附加光源（平行光）。与 camera 同约定：position → target 定方向，故同样可拖可摆 */
+export interface PrevisLight {
+  id: string
+  name: string
+  /** 平行光方向由 position → target 决定（与 camera 同约定） */
+  position: [number, number, number]
+  target: [number, number, number]
+  intensity: number
+  color?: string
+  castShadow: boolean
+}
+
 export interface PrevisShot {
   shotIndex: number
   camera: { position: [number, number, number]; target: [number, number, number]; fov: number }
+  /** 该分镜的附加光源（在默认半球光 + 主平行光之外叠加）；旧数据缺省 = 无 */
+  lights?: PrevisLight[]
   blocking: BlockingItem[]
   previewSvg: string
   depthSvg: string
@@ -304,10 +318,17 @@ export interface AppState {
   }
 }
 
-/** 预演撤销快照：stageId + 各镜头纯数据字段 */
+/** 预演撤销快照：stageId + 各镜头纯数据字段。
+ *  含镜头数本身——删除分镜这类「镜头数变化」的编辑要能撤销，故按快照整体重建 shots 数组。 */
 export interface PrevisUndoSnapshot {
   stageId: string
-  shots: { shotIndex: number; blocking: BlockingItem[]; camera: PrevisShot["camera"] }[]
+  shots: {
+    shotIndex: number
+    blocking: BlockingItem[]
+    camera: PrevisShot["camera"]
+    /** 旧栈快照无此字段 = 当时无光源 */
+    lights?: PrevisLight[]
+  }[]
 }
 
 /* ---------- Action 契约（引擎与 UI 通信边界） ---------- */
@@ -372,6 +393,22 @@ export type Action =
       shotIndex: number
       camera: PrevisShot["camera"]
       commit?: boolean
+    }
+  | {
+      type: "UPDATE_PREVIS_LIGHTS"
+      projectId: string
+      stageId: string
+      shotIndex: number
+      lights: PrevisLight[]
+      /** false = 拖拽中间帧（不产生撤销快照）；默认 true */
+      commit?: boolean
+    }
+  | {
+      /** 删除分镜（= 移除该镜头机位）：剩余分镜重编号保持连续；至少保留一个分镜 */
+      type: "DELETE_PREVIS_SHOT"
+      projectId: string
+      stageId: string
+      shotIndex: number
     }
   | { type: "RERENDER_PREVIS"; projectId: string; stageId: string; now: string }
   | { type: "PREVIS_UNDO"; projectId: string; stageId: string }

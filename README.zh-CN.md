@@ -36,7 +36,7 @@ Cine Muse 是一款桌面端 AI 视频生成客户端，由 **Next.js 静态渲�
 
 三层之间共享同一份数据契约：
 
-1. **渲染层** —— Next.js 16 静态导出（`CINE_RELATIVE_ASSETS=1`）+ React 19 + Base UI（shadcn 风格组件）+ Tailwind v4。UI 状态集中在 immer 全局 store（`src/lib/store.tsx`），每次变更经过归一化并持久化。
+1. **渲染层** —— Next.js 16 静态导出 + React 19 + Base UI（shadcn 风格组件）+ Tailwind v4。UI 状态集中在 immer 全局 store（`src/lib/store.tsx`），每次变更经过归一化并持久化。
 2. **本地服务** —— Express 监听 `127.0.0.1:47832`，scrypt 密码哈希、token 会话、better-sqlite3 存储。负责认证（`/api/auth/*`）与状态存储（`/api/state`）。
 3. **Electron 壳** —— 主进程带单实例锁（避免端口冲突）、IPC 透传、退出前 300ms 延迟关闭确保最后一次状态落盘。
 

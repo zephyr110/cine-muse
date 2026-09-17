@@ -16,8 +16,8 @@
     "dev:server": "node server/index.js",
     "dev:all": "concurrently -k -n server,web -c blue,green \"node server/index.js\" \"next dev\"",
     "dev:desktop": "pnpm build:electron && CINE_DEV_URL=http://localhost:3000 electron .",
-    "build:desktop": "CINE_RELATIVE_ASSETS=1 next build && pnpm build:electron && electron-builder",
-    "build:desktop:dir": "CINE_RELATIVE_ASSETS=1 next build && pnpm build:electron && electron-builder --dir",
+    "build:desktop": "next build && pnpm build:electron && electron-builder",
+    "build:desktop:dir": "next build && pnpm build:electron && electron-builder --dir",
     "desktop:pack": "pnpm build:desktop:dir"
   },
   "dependencies": {
