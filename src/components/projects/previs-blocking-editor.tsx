@@ -1207,7 +1207,10 @@ function BlockingShotEditor({
               <span
                 onDoubleClick={() => setRenamingId(b.id)}
                 title="双击重命名"
-                className="w-24 shrink-0 cursor-text truncate text-[11px] text-muted-foreground"
+                // 名字列可压缩（min-w-0 撤掉 flex 的 min-width:auto 下限）：300px 侧栏里
+                // 「名字 + X/Z 两个输入 + 删除」合计 276px > 内容区 258px，原 shrink-0 把
+                // 多出的 18px 顶到行外，删除钮吃掉右侧内边距、紧贴行框。让名字先截断即可。
+                className="w-24 min-w-0 cursor-text truncate text-[11px] text-muted-foreground"
               >
                 {b.kind === "character" ? "角色" : "道具"} · {b.name}
               </span>
