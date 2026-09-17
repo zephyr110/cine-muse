@@ -37,7 +37,7 @@ Cine Muse is a desktop AI video generation client built with a **Next.js static 
 
 Three layers, one data contract:
 
-1. **Renderer** — Next.js 16 static export (`CINE_RELATIVE_ASSETS=1`) + React 19 + Base UI (shadcn-style components) + Tailwind v4. UI state lives in an immer-backed store (`src/lib/store.tsx`); every mutation is normalized and persisted.
+1. **Renderer** — Next.js 16 static export + React 19 + Base UI (shadcn-style components) + Tailwind v4. UI state lives in an immer-backed store (`src/lib/store.tsx`); every mutation is normalized and persisted.
 2. **Local service** — Express on `127.0.0.1:47832` with scrypt password hashing, token sessions and SQLite via better-sqlite3. It owns authentication (`/api/auth/*`) and state storage (`/api/state`).
 3. **Electron shell** — main process with a single-instance lock (avoids port conflicts), IPC passthrough and a 300 ms delayed close on quit so the last state flush lands.
 
