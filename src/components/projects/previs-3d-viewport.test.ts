@@ -10,11 +10,22 @@
  *
  * 舞台纵深仅约 5.6 个世界单位，故该捕获半径足以覆盖角色常被摆放的区域。
  */
+import { readFileSync } from "node:fs"
+import path from "node:path"
 import { describe, expect, it } from "vitest"
 import * as THREE from "three"
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js"
 
 import { lightOwnerId, parseLightOwnerId } from "@/lib/engine/previs-light"
-import { buildCameraRig, buildLightRig, ownerId } from "./previs-3d-viewport"
+import type { BlockingItem } from "@/lib/types"
+import {
+  buildBoundsEdges,
+  buildCameraRig,
+  buildLightRig,
+  labelLocalY,
+  ownerId,
+} from "./previs-3d-viewport"
+import { createCharacterModel } from "./previs-ue4-model"
 
 /** 默认导演视角（与视口 HOME_VIEW 同值） */
 const HOME = { position: new THREE.Vector3(8, 8, 10), target: new THREE.Vector3(0, 1, 0), fov: 45 }
@@ -187,5 +198,147 @@ describe("光源 rig 与角色拾取", () => {
     const picked = pickIdWithLight(sceneWith(rig), rig, new THREE.Vector3(2.5, 3.05, 3.125))
     expect(picked).toBe(lightOwnerId("lt1"))
     expect(parseLightOwnerId(picked)).toBe("lt1")
+  })
+})
+
+/* ==========================================================================
+ * UE4 蒙皮角色：包围盒缓存
+ * ========================================================================== */
+
+const GLB_PATH = path.join(process.cwd(), "public", "models", "ue-mannequin-retopology.glb")
+
+/** 去除材质纹理引用（node 无 image 解码能力，parse 前剥离内嵌 PNG；同 previs-ue4-model.test） */
+function stripGltfTextures(buffer: Buffer) {
+  const jsonLength = buffer.readUInt32LE(12)
+  const json = JSON.parse(buffer.toString("utf8", 20, 20 + jsonLength)) as Record<string, unknown> & {
+    materials?: Record<string, unknown>[]
+    images?: unknown[]
+    textures?: unknown[]
+  }
+
+  for (const material of json.materials ?? []) {
+    const pbr = material.pbrMetallicRoughness as Record<string, unknown> | undefined
+    if (pbr) {
+      delete pbr.baseColorTexture
+      delete pbr.metallicRoughnessTexture
+    }
+    delete material.emissiveTexture
+    delete material.normalTexture
+    delete material.occlusionTexture
+    delete material.alphaTexture
+  }
+  delete json.images
+  delete json.textures
+
+  const jsonRaw = Buffer.from(JSON.stringify(json), "utf8")
+  const newJsonLength = Math.ceil(jsonRaw.length / 4) * 4
+  const binChunkStart = 20 + jsonLength + 8
+  const binChunkLength = buffer.readUInt32LE(20 + jsonLength + 4)
+
+  const out = Buffer.alloc(12 + 8 + newJsonLength + 8 + binChunkLength)
+  out.write("glTF", 0, "ascii")
+  out.writeUInt32LE(2, 4)
+  out.writeUInt32LE(out.length, 8)
+  out.writeUInt32LE(newJsonLength, 12)
+  out.writeUInt32LE(0x4e4f534a, 16)
+  jsonRaw.copy(out, 20)
+  out.fill(0x20, 20 + jsonRaw.length, 20 + newJsonLength)
+  out.writeUInt32LE(binChunkLength, 20 + newJsonLength)
+  out.writeUInt32LE(0x004e4942, 24 + newJsonLength)
+  buffer.copy(out, 28 + newJsonLength, binChunkStart, binChunkStart + binChunkLength)
+  return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength)
+}
+
+/** 真实 UE4 角色（资产注入方式同 previs-ue4-model.test），摆到指定位置并刷新世界矩阵 */
+async function makeUe4Character(at: THREE.Vector3): Promise<THREE.Object3D> {
+  const gltf = await new GLTFLoader().parseAsync(stripGltfTextures(readFileSync(GLB_PATH)), "")
+  const item: BlockingItem = {
+    id: "ch1",
+    kind: "character",
+    name: "角色",
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+  }
+  const { object } = createCharacterModel(item, { ue4Scene: gltf.scene })
+  object.userData.itemId = "ch1" // 同视口 buildMesh：id 挂在最外层 Group 上
+  object.position.copy(at)
+  object.updateMatrixWorld(true)
+  return object
+}
+
+/** 清掉蒙皮网格上的包围盒缓存（= pickAt 的拾取前守卫）。
+ *  three 的类型把 boundingBox 声明为非空 Box3，运行时初值其实是 null，raycast 也明确
+ *  支持 null = 跳过该早退——所以这里按真实类型改写。 */
+function clearCachedBox(mesh: THREE.SkinnedMesh) {
+  ;(mesh as unknown as { boundingBox: THREE.Box3 | null }).boundingBox = null
+}
+
+function skinnedMeshes(root: THREE.Object3D): THREE.SkinnedMesh[] {
+  const out: THREE.SkinnedMesh[] = []
+  root.traverse((o) => {
+    if ((o as THREE.SkinnedMesh).isSkinnedMesh) out.push(o as THREE.SkinnedMesh)
+  })
+  return out
+}
+
+/**
+ * #96「角色有时候点不中」的第二条通路（与上节的 rig 线框无关）：包围盒缓存。
+ *
+ * 靶心：`new THREE.Box3().setFromObject(obj)`（precise 默认 false）走 Box3.expandByObject，
+ * 该分支对「自带 boundingBox 属性」的对象会调用 object.computeBoundingBox() 并把结果
+ * **缓存回对象**（Box3.js:340-350；SkinnedMesh 构造时就把该属性定义为 null，故必然命中此分支）。
+ *
+ * 而该盒子落在哪个坐标系取决于 bindMatrixInverse：它只在 SkinnedMesh.updateMatrixWorld 里
+ * 由 matrixWorld 重新同步（SkinnedMesh.js:290-296），可 Box3.expandByObject 走的是
+ * Object3D.updateWorldMatrix，不触发那个覆写。于是「角色刚摆好位置、还没渲染」时算出的盒子
+ * 是**世界系**的——角色创建后在同一个 tick 里建标签，恰好就是这个状态；而 raycast 读到的是
+ * 已同步的 matrixWorld、按局部系比对（SkinnedMesh.js:199 注释「test with bounding box in
+ * local space」）→ 恒不相交 → 该角色从此永久点不中。缓存又不会自动失效（boundingBox 只由
+ * 使用者显式清空或重算），下一帧把 bindMatrixInverse 归位也救不回来。
+ *
+ * 写入方只有两处，都在无意中发生：labelLocalY（每个角色建标签时逐 mesh 调用）与
+ * buildBoundsEdges（多选红框 / 边缘图导出）。这就是「有时候」——角色在被建标签或多选
+ * 之前是可点的。修复即两处一律 precise=true（逐顶点取样，不写缓存），并在 pickAt 拾取前
+ * 清空缓存兜底。
+ */
+describe("UE4 蒙皮角色：包围盒缓存不得污染拾取（#96）", () => {
+  it("★ buildBoundsEdges / labelLocalY 不得在 SkinnedMesh 上留下 boundingBox 缓存", async () => {
+    const char = await makeUe4Character(new THREE.Vector3(3, 0, -1.5))
+    const meshes = skinnedMeshes(char)
+    expect(meshes.length).toBeGreaterThan(0)
+    // 前置：新克隆不得自带缓存（否则说明污染另有来源）
+    expect(meshes.map((m) => m.boundingBox)).toEqual(meshes.map(() => null))
+
+    buildBoundsEdges(char) // 多选红框 / 边缘图导出
+    for (const m of meshes) labelLocalY(m) // 每个角色建标签时逐 mesh 调用
+
+    expect(meshes.map((m) => m.boundingBox)).toEqual(meshes.map(() => null))
+  })
+
+  it("★ 对照：摆位后未及渲染就建标签 → 缓存下世界系盒子，射线恒不命中；清空后恢复", async () => {
+    const at = new THREE.Vector3(3, 0, -1.5)
+    const char = await makeUe4Character(new THREE.Vector3(0, 0, 0)) // 在原点完成一次同步（= 克隆/解析时的 bindMatrixInverse）
+    const scene = sceneWith(char)
+    const aim = () => new THREE.Vector3(char.position.x, 0.9, char.position.z) // 躯干中心
+
+    // 摆到目标位，只走 updateWorldMatrix（正是 Box3.expandByObject 的路径）：
+    // 它不会触发 SkinnedMesh.updateMatrixWorld → bindMatrixInverse 仍停在原点的逆
+    char.position.copy(at)
+    char.updateWorldMatrix(false, true)
+    new THREE.Box3().setFromObject(char) // 旧代码路径：labelLocalY / buildBoundsEdges 会这么写
+
+    // 类型上 boundingBox 声明为非空，运行时才可能是 null —— 这里按真实类型断言
+    const cached = skinnedMeshes(char)[0].boundingBox as unknown as THREE.Box3 | null
+    expect(cached, "默认路径应把盒子缓存回 mesh").not.toBeNull()
+    // 世界系：跟着角色走（x≈3），而不是以局部原点为中心的 ~0
+    expect((cached as THREE.Box3).getCenter(new THREE.Vector3()).x).toBeCloseTo(at.x, 0)
+
+    // 下一帧渲染把 bindMatrixInverse 归位，三角形测试本身恢复正常 —— 但缓存盒子已经留在 mesh 上
+    char.updateMatrixWorld(true)
+    expect(pickId(scene, null, aim())).toBeNull() // 被缓存盒子早退 → 点不中（浏览器实测同样为 0 命中）
+
+    for (const m of skinnedMeshes(char)) clearCachedBox(m)
+    expect(pickId(scene, null, aim())).toBe("ch1")
   })
 })
